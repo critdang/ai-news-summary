@@ -7,7 +7,7 @@ Reviewed locally cloned source trees and dependency manifests on 2026-10-19. The
 - Source: [0xhav0c/Feed2040](https://github.com/0xhav0c/Feed2040)
 - License: MIT; original `LICENSE` retained at the project root.
 - Inspected: `package.json`, `src/app`, `src/components`, `src/lib`, `prisma/schema.prisma`, `scripts`, and the README.
-- Dependencies: Next.js 16 / React 19 / TypeScript; Prisma 7 and PostgreSQL adapter; `rss-parser`; Zod; Jest/ts-jest; plus UI, authentication, AI, Telegram, Redis, and web-push packages in the upstream manifest. The existing lockfile was carried over. Redis, Telegram polling, and other always-running behavior are outside this project's initial serverless target and need review before use.
+- Dependencies: Next.js 16 / React 19 / TypeScript; Prisma 7 and PostgreSQL adapter; `rss-parser`; Zod; Jest/ts-jest; plus the UI and auth packages used by the retained application shell. The initial lockfile came from upstream; unused Anthropic/OpenAI/translation SDKs, Redis, Telegram, web-push, and cron typings have since been removed. Redis and always-running integrations remain outside this project's serverless target.
 - Reuse: Next.js reader structure, article interaction patterns, UI components, and initial project scaffold. The copied application is adapted to this project's Vercel/Supabase/GitHub Actions plan.
 
 ## SummaRSS

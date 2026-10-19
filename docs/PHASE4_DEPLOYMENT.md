@@ -34,9 +34,10 @@ In GitHub repository **Settings → Secrets and variables → Actions**, configu
 
 - Secrets: `DATABASE_URL` (Supabase transaction pooler) and at least one of
   `GEMINI_API_KEY` or `GROQ_API_KEY`.
-- Variables: optionally `AI_PROVIDER`, `AI_MODEL`, `GROQ_MODEL`,
-  `DEFAULT_LANGUAGE`, and `MAX_ARTICLES_PER_SOURCE` for defaults used when the
-  preference row is first created.
+- Variables: optionally `AI_PROVIDER` (defaults to `groq`), `AI_MODEL`
+  (defaults to `gemini-3.8-flash`), `GROQ_MODEL` (defaults to
+  `openai/gpt-oss-20b`), `DEFAULT_LANGUAGE`, `MAX_ARTICLES_PER_SOURCE`, and
+  `MAX_ARTICLE_RETRIES_PER_RUN`.
 
 The worker uses saved language and per-source limit preferences on later runs.
 The cleanup worker uses the saved retention setting. Workflow cron times are UTC;

@@ -1,7 +1,7 @@
 /**
  * src/lib/aiProvider.ts
  *
- * AI provider abstraction supporting Gemini (primary) and Groq (fallback).
+ * AI provider abstraction supporting Groq (primary), Gemini fallback, and mock mode.
  *
  * Design goals (per AGENTS.md / master prompt):
  *  - Provider interface so Gemini/Groq can be swapped without changing business logic.
@@ -11,7 +11,7 @@
  *    ignore any instructions found inside it (prompt-injection hardening).
  *  - Never called from browser code; only server-side (API routes + ingestion worker).
  *
- * Provider selection is via AI_PROVIDER env var ("gemini" | "groq").
+ * Provider selection is via AI_PROVIDER env var ("gemini" | "groq" | "mock").
  * The non-selected provider is used as fallback on failure.
  */
 
@@ -128,7 +128,48 @@ function validateResult(raw: unknown): AIResult {
 // Transient-error detection (retry only on transient failures)
 // ─────────────────────────────────────────────────────────────────────────────
 
+class AIProviderHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterMs: number | null
+  ) {
+    super(message);
+    this.name = "AIProviderHttpError";
+  }
+}
+
+function retryAfterDelay(headers: Headers | undefined, body: string): number | null {
+  const header = headers?.get("retry-after");
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const dateMs = Date.parse(header);
+    if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  }
+
+  // Groq's rate-limit response includes guidance such as "try again in 1.2s"
+  // or "try again in 700ms" when the HTTP header is absent.
+  const guidance = body.match(/try again in\s+([\d.]+)\s*(ms|s|sec(?:ond)?s?|m|min(?:ute)?s?)/i);
+  if (!guidance) return null;
+  const value = Number(guidance[1]);
+  const unit = guidance[2].toLowerCase();
+  const multiplier = unit === "ms" ? 1 : unit.startsWith("m") ? 60_000 : 1000;
+  return Math.max(0, value * multiplier);
+}
+
+function providerHttpError(provider: string, response: Response, body: string): Error {
+  return new AIProviderHttpError(
+    `${provider} HTTP ${response.status}: ${body.slice(0, 500)}`,
+    response.status,
+    retryAfterDelay(response.headers, body)
+  );
+}
+
 function isTransientError(err: unknown): boolean {
+  if (err instanceof AIProviderHttpError) {
+    return err.status === 429 || err.status === 502 || err.status === 503 || err.status === 504;
+  }
   if (err instanceof Error) {
     const msg = err.message;
     // 429 rate limit, 503/502/504 server errors, timeouts, network errors.
@@ -140,6 +181,14 @@ function isTransientError(err: unknown): boolean {
     }
   }
   return false;
+}
+
+function retryDelayMs(err: unknown, attempt: number): number {
+  if (err instanceof AIProviderHttpError && err.retryAfterMs !== null) {
+    // Avoid unbounded waits if an upstream service returns an unreasonable value.
+    return Math.min(err.retryAfterMs, 120_000) + Math.floor(Math.random() * 250);
+  }
+  return backoffMs(attempt);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,7 +204,7 @@ class GeminiProvider implements AIProvider {
 
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY || "";
-    this.model = process.env.AI_MODEL || "gemini-1.5-flash";
+    this.model = process.env.AI_MODEL || "gemini-3.8-flash";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
   }
@@ -196,7 +245,7 @@ class GeminiProvider implements AIProvider {
         lastErr = err;
         if (attempt >= this.maxRetries - 1) break;
         if (!isTransientError(err)) break;
-        await sleep(backoffMs(attempt));
+        await sleep(retryDelayMs(err, attempt));
       }
     }
     throw lastErr;
@@ -222,7 +271,7 @@ class GeminiProvider implements AIProvider {
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Gemini HTTP ${res.status}: ${txt.slice(0, 500)}`);
+        throw providerHttpError("Gemini", res, txt);
       }
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
@@ -248,7 +297,7 @@ class GroqProvider implements AIProvider {
 
   constructor() {
     this.apiKey = process.env.GROQ_API_KEY || "";
-    this.model = process.env.GROQ_MODEL || "llama-3.1-70b-versatile";
+    this.model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
   }
@@ -282,7 +331,7 @@ class GroqProvider implements AIProvider {
         lastErr = err;
         if (attempt >= this.maxRetries - 1) break;
         if (!isTransientError(err)) break;
-        await sleep(backoffMs(attempt));
+        await sleep(retryDelayMs(err, attempt));
       }
     }
     throw lastErr;
@@ -303,7 +352,7 @@ class GroqProvider implements AIProvider {
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Groq HTTP ${res.status}: ${txt.slice(0, 500)}`);
+        throw providerHttpError("Groq", res, txt);
       }
       const data = await res.json();
       const text = data?.choices?.[0]?.message?.content ?? "";
@@ -368,7 +417,24 @@ function backoffMs(attempt: number): number {
 // Provider factory + fallback wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
+class MockProvider implements AIProvider {
+  readonly name = "mock";
+
+  async summarizeArticle(title: string): Promise<AIResult> {
+    return {
+      summary: `Mock summary for: ${title.slice(0, 180)}`,
+      relevanceScore: 5,
+      relevanceExplanation: "Deterministic local mock result; no AI provider was called.",
+      tags: [],
+    };
+  }
+}
+
 function createProviders(): AIProvider[] {
+  if (process.env.AI_PROVIDER?.toLowerCase() === "mock") {
+    return [new MockProvider()];
+  }
+
   const providers: AIProvider[] = [];
   if (process.env.GEMINI_API_KEY) providers.push(new GeminiProvider());
   if (process.env.GROQ_API_KEY) providers.push(new GroqProvider());
@@ -400,7 +466,7 @@ export async function summarizeArticle(
     throw new Error("No AI provider configured (set GEMINI_API_KEY or GROQ_API_KEY)");
   }
 
-  const preferred = process.env.AI_PROVIDER?.toLowerCase() || "gemini";
+  const preferred = process.env.AI_PROVIDER?.toLowerCase() || "groq";
   const ordered = [...providers].sort(
     (a, b) => (a.name === preferred ? -1 : b.name === preferred ? 1 : 0)
   );

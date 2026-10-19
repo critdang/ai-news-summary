@@ -39,6 +39,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useKeyboardShortcuts } from "@/lib/hooks/useKeyboardShortcuts";
+import { nextArticleIndex } from "@/lib/readerNavigation";
 
 type Article = {
   id: string;
@@ -106,6 +108,7 @@ const ArticleItem = memo(function ArticleItem({
 
   return (
     <button
+      id={`article-${article.id}`}
       onClick={() => onSelect(article)}
       className={cn(
         "w-full flex items-start gap-3 rounded-xl border border-transparent p-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -198,6 +201,7 @@ export default function ReaderPage() {
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const router = useRouter();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const requestIdRef = useRef(0);
 
@@ -318,6 +322,31 @@ export default function ReaderPage() {
       rollback(original);
     }
   }, [articles]);
+
+  const selectRelativeArticle = useCallback((direction: -1 | 1) => {
+    if (articles.length === 0) return;
+    const currentIndex = selectedArticle
+      ? articles.findIndex((article) => article.id === selectedArticle.id)
+      : -1;
+    const next = articles[nextArticleIndex(currentIndex, articles.length, direction)];
+    setSelectedArticle(next);
+    setSheetOpen(true);
+    requestAnimationFrame(() => {
+      document.getElementById(`article-${next.id}`)?.scrollIntoView({ block: "nearest" });
+    });
+  }, [articles, selectedArticle]);
+
+  const shortcuts = useMemo(() => ({
+    j: () => selectRelativeArticle(1),
+    k: () => selectRelativeArticle(-1),
+    "/": () => searchInputRef.current?.focus(),
+    b: () => { if (selectedArticle) void toggleBookmark(selectedArticle.id); },
+    Escape: () => {
+      setSheetOpen(false);
+      setSelectedArticle(null);
+    },
+  }), [selectRelativeArticle, selectedArticle, toggleBookmark]);
+  useKeyboardShortcuts(shortcuts);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
@@ -450,6 +479,8 @@ export default function ReaderPage() {
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
               />
               <Input
+                ref={searchInputRef}
+                data-reader-search
                 aria-label="Search articles"
                 type="text"
                 value={search}
@@ -634,6 +665,7 @@ export default function ReaderPage() {
               </ScrollArea>
             )}
           </div>
+          <p className="sr-only">Keyboard shortcuts: J and K move between articles, slash focuses search, B toggles the selected bookmark, and Escape closes the article panel.</p>
         </main>
       </div>
 

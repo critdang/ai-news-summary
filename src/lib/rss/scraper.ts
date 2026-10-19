@@ -133,7 +133,7 @@ export async function scrapeArticle(url: string): Promise<ScrapedArticle | null>
       maxBytes: MAX_BODY_SIZE,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; Feed2040/1.0; +https://github.com/feed2040)",
+          "Mozilla/5.0 (compatible; AI-News-Summary/1.0; +https://github.com/critdang/ai-news-summary)",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },
@@ -193,7 +193,7 @@ export async function scrapeFullText(url: string): Promise<string | null> {
       maxBytes: MAX_BODY_SIZE,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; Feed2040/1.0; +https://github.com/feed2040)",
+          "Mozilla/5.0 (compatible; AI-News-Summary/1.0; +https://github.com/critdang/ai-news-summary)",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },

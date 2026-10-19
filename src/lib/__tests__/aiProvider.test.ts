@@ -6,10 +6,16 @@
  * fetch is mocked so no real API calls are made.
  */
 
-import { summarizeArticle, resetProviderCacheForTests, type AIResult } from "@/lib/aiProvider";
+import { summarizeArticle, resetProviderCacheForTests } from "@/lib/aiProvider";
 
 // Helper to mock fetch with a given response.
-function mockFetch(response: { ok: boolean; status: number; json: unknown; text?: string }) {
+function mockFetch(response: {
+  ok: boolean;
+  status: number;
+  json: unknown;
+  text?: string;
+  headers?: Record<string, string>;
+}) {
   const jsonPromise = Promise.resolve(response.json);
   const textPromise = Promise.resolve(response.text ?? JSON.stringify(response.json));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,6 +25,7 @@ function mockFetch(response: { ok: boolean; status: number; json: unknown; text?
       status: response.status,
       json: () => jsonPromise,
       text: () => textPromise,
+      headers: new Headers(response.headers),
     } as Response)
   );
   return globalThis.fetch as jest.Mock;
@@ -27,10 +34,68 @@ function mockFetch(response: { ok: boolean; status: number; json: unknown; text?
 beforeEach(() => {
   process.env.GEMINI_API_KEY = "test-gemini-key";
   process.env.GROQ_API_KEY = "test-groq-key";
+  process.env.AI_PROVIDER = "gemini";
+  process.env.AI_MAX_RETRIES = "3";
+  delete process.env.GROQ_MODEL;
   resetProviderCacheForTests();
 });
 
 describe("summarizeArticle — structured output", () => {
+  it("uses the configured Groq model and honors Retry-After", async () => {
+    process.env.AI_PROVIDER = "groq";
+    process.env.GROQ_MODEL = "openai/gpt-oss-20b";
+    process.env.AI_MAX_RETRIES = "2";
+    const responses = [
+      {
+        ok: false,
+        status: 429,
+        json: { error: "rate limited" },
+        text: "rate limited",
+        headers: { "retry-after": "0.001" },
+      },
+      {
+        ok: true,
+        status: 200,
+        json: {
+          choices: [{ message: { content: '{"summary":"Ready","relevanceScore":6,"relevanceExplanation":"Useful","tags":["ai"]}' } }],
+        },
+      },
+    ];
+    let index = 0;
+    const fetchMock = (globalThis.fetch as jest.Mock) = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input).toBe("https://api.groq.com/openai/v1/chat/completions");
+      expect(init?.method).toBe("POST");
+      const response = responses[index++];
+      return {
+        ok: response.ok,
+        status: response.status,
+        json: async () => response.json,
+        text: async () => response.text ?? JSON.stringify(response.json),
+        headers: new Headers(response.headers),
+      } as Response;
+    });
+
+    const out = await summarizeArticle("Test title", "Excerpt", "en");
+
+    expect(out?.provider).toBe("groq");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const requestBody = fetchMock.mock.calls[0]?.[1]?.body;
+    expect(JSON.parse(String(requestBody)).model).toBe("openai/gpt-oss-20b");
+  });
+
+  it("supports deterministic mock mode without provider credentials or network calls", async () => {
+    process.env.AI_PROVIDER = "mock";
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    const fetchMock = (globalThis.fetch as jest.Mock) = jest.fn();
+
+    const out = await summarizeArticle("A local test", "No network", "en");
+
+    expect(out?.provider).toBe("mock");
+    expect(out?.result.summary).toContain("A local test");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("returns validated AIResult from Gemini on success", async () => {
     mockFetch({
       ok: true,
@@ -79,7 +144,6 @@ describe("summarizeArticle — structured output", () => {
       },
     ];
     let callIndex = 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fetchMock = (globalThis.fetch as jest.Mock) = jest.fn(() => {
       const r = responses[callIndex++] ?? responses[responses.length - 1];
       return Promise.resolve({

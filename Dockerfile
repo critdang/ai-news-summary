@@ -41,7 +41,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/prisma/migrations ./prisma/migrations
 COPY --from=builder /app/scripts ./scripts
 
-# Runtime node_modules (Prisma, pg, bcrypt, ioredis, telegraf, openai, dompurify)
+# Runtime node_modules (Prisma, pg, bcrypt, and DOMPurify)
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/pg ./node_modules/pg
@@ -59,16 +59,6 @@ COPY --from=builder /app/node_modules/postgres-date ./node_modules/postgres-date
 COPY --from=builder /app/node_modules/postgres-interval ./node_modules/postgres-interval
 COPY --from=builder /app/node_modules/split2 ./node_modules/split2
 COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
-COPY --from=builder /app/node_modules/ioredis ./node_modules/ioredis
-COPY --from=builder /app/node_modules/denque ./node_modules/denque
-COPY --from=builder /app/node_modules/standard-as-callback ./node_modules/standard-as-callback
-COPY --from=builder /app/node_modules/lodash.defaults ./node_modules/lodash.defaults
-COPY --from=builder /app/node_modules/lodash.isarguments ./node_modules/lodash.isarguments
-COPY --from=builder /app/node_modules/redis-parser ./node_modules/redis-parser
-COPY --from=builder /app/node_modules/redis-errors ./node_modules/redis-errors
-COPY --from=builder /app/node_modules/cluster-key-slot ./node_modules/cluster-key-slot
-COPY --from=builder /app/node_modules/debug ./node_modules/debug
-COPY --from=builder /app/node_modules/ms ./node_modules/ms
 # Entrypoint
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh

@@ -5,8 +5,8 @@
  *
  * For each configured source:
  *   1. Fetch + parse the RSS feed (SSRF-safe via src/lib/rss/parser).
- *   2. Deduplicate by canonical URL (and normalized title/source).
- *   3. For each NEW article: generate an AI summary (Gemini primary, Groq fallback).
+ *   2. Deduplicate by canonical URL.
+ *   3. For each NEW article: generate an AI summary (Groq primary, Gemini fallback).
  *   4. Persist articles, update Source / FeedHealth / IngestionRun.
  *
  * Reliability:
@@ -33,6 +33,10 @@ import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
 const MAX_ARTICLES_PER_SOURCE = Number(
   process.env.MAX_ARTICLES_PER_SOURCE
 ) || 20;
+const configuredRetryLimit = Number(process.env.MAX_ARTICLE_RETRIES_PER_RUN);
+const MAX_ARTICLE_RETRIES_PER_RUN = Number.isFinite(configuredRetryLimit)
+  ? Math.max(0, Math.floor(configuredRetryLimit))
+  : 25;
 const DEFAULT_LANGUAGE = process.env.DEFAULT_LANGUAGE || "vi";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,8 +75,8 @@ async function ensureSourcePreference(): Promise<void> {
       data: {
         language: DEFAULT_LANGUAGE,
         retentionDays: 45,
-        aiProvider: "gemini",
-        aiModel: "gemini-1.5-flash",
+        aiProvider: process.env.AI_PROVIDER || "groq",
+        aiModel: process.env.AI_MODEL || "gemini-3.8-flash",
         maxArticlesPerSource: MAX_ARTICLES_PER_SOURCE,
       },
     });
@@ -87,6 +91,19 @@ export async function ensureDefaultCategories(): Promise<void> {
       create: { name, slug: categorySlug(name), sortOrder },
     });
   }
+}
+
+export async function markStaleIngestionRuns(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - 30 * 60 * 1000);
+  const result = await prisma.ingestionRun.updateMany({
+    where: { status: "running", startedAt: { lt: cutoff } },
+    data: {
+      status: "failed",
+      completedAt: now,
+      errorMessage: "Marked failed because the run did not finish within 30 minutes.",
+    },
+  });
+  return result.count;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,6 +246,55 @@ export async function processSource(
   return result;
 }
 
+export async function retryExistingArticles(
+  language: string,
+  limit = MAX_ARTICLE_RETRIES_PER_RUN
+): Promise<{ attempted: number; completed: number; failed: number }> {
+  if (limit <= 0) return { attempted: 0, completed: 0, failed: 0 };
+
+  const articles = await prisma.article.findMany({
+    where: { processingStatus: { in: ["pending", "failed"] } },
+    orderBy: { createdAt: "asc" },
+    take: Math.floor(limit),
+    select: { id: true, title: true, excerpt: true, summary: true },
+  });
+  let completed = 0;
+  let failed = 0;
+
+  for (const article of articles) {
+    try {
+      const outcome = await summarizeArticle(
+        article.title,
+        article.excerpt || article.summary || null,
+        language
+      );
+      if (!outcome) {
+        failed++;
+        continue;
+      }
+
+      const updated = await prisma.article.updateMany({
+        where: {
+          id: article.id,
+          processingStatus: { in: ["pending", "failed"] },
+        },
+        data: {
+          aiSummary: outcome.result.summary,
+          relevanceScore: outcome.result.relevanceScore,
+          relevanceExplanation: outcome.result.relevanceExplanation,
+          tags: outcome.result.tags,
+          processingStatus: "completed",
+        },
+      });
+      completed += updated.count;
+    } catch {
+      failed++;
+    }
+  }
+
+  return { attempted: articles.length, completed, failed };
+}
+
 async function updateFeedHealth(
   sourceId: string,
   success: boolean,
@@ -300,12 +366,31 @@ export async function runIngestion(): Promise<void> {
         : MAX_ARTICLES_PER_SOURCE,
   };
 
+  const staleRunCount = await markStaleIngestionRuns();
+  if (staleRunCount > 0) {
+    console.warn(`[ingest] marked stale runs failed: ${staleRunCount}`);
+  }
+
   const run = await prisma.ingestionRun.create({
     data: {
       status: "running",
       sourcesProcessed: 0,
     },
   });
+
+  const retried = await retryExistingArticles(ingestionOptions.language).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[ingest] Existing article retry query failed: ${message}`);
+    return { attempted: 0, completed: 0, failed: 1 };
+  });
+  let totalAI = retried.attempted;
+  let totalAIFailures = retried.failed;
+  let hadError = retried.failed > 0;
+  if (retried.attempted > 0) {
+    console.log(
+      `[ingest] retries: attempted=${retried.attempted} completed=${retried.completed} failed=${retried.failed}`
+    );
+  }
 
   const sources = await prisma.source.findMany({
     include: { category: { select: { name: true } } },
@@ -328,9 +413,6 @@ export async function runIngestion(): Promise<void> {
   const sourceResults: SourceResult[] = [];
   let totalNew = 0;
   let totalFetched = 0;
-  let totalAI = 0;
-  let totalAIFailures = 0;
-  let hadError = false;
 
   // Process sources sequentially (one failing does not abort the others).
   for (const source of sources) {

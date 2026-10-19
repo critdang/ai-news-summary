@@ -8,13 +8,18 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { ensureDefaultCategories, processSource } from "../ingest";
+import {
+  ensureDefaultCategories,
+  markStaleIngestionRuns,
+  processSource,
+  retryExistingArticles,
+} from "../ingest";
 
 // Mock Prisma so no real database is touched.
 jest.mock("@/lib/prisma", () => ({
   prisma: {
     source: { update: jest.fn(), findMany: jest.fn() },
-    article: { findMany: jest.fn(), create: jest.fn() },
+    article: { findMany: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
     category: { findUnique: jest.fn(), create: jest.fn(), upsert: jest.fn() },
     feedHealth: {
       findUnique: jest.fn(),
@@ -23,7 +28,7 @@ jest.mock("@/lib/prisma", () => ({
       upsert: jest.fn(),
     },
     userPreference: { findFirst: jest.fn(), create: jest.fn() },
-    ingestionRun: { create: jest.fn(), update: jest.fn() },
+    ingestionRun: { create: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     $disconnect: jest.fn(),
   },
 }));
@@ -62,7 +67,7 @@ import { canonicalizeUrl } from "@/lib/urlUtils";
 
 const mockPrisma = prisma as unknown as {
   source: { update: jest.Mock; findMany: jest.Mock };
-  article: { findMany: jest.Mock; create: jest.Mock };
+  article: { findMany: jest.Mock; create: jest.Mock; updateMany: jest.Mock };
   category: { findUnique: jest.Mock; create: jest.Mock; upsert: jest.Mock };
   feedHealth: {
     findUnique: jest.Mock;
@@ -71,7 +76,7 @@ const mockPrisma = prisma as unknown as {
     upsert: jest.Mock;
   };
   userPreference: { findFirst: jest.Mock; create: jest.Mock };
-  ingestionRun: { create: jest.Mock; update: jest.Mock };
+  ingestionRun: { create: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
   $disconnect: jest.Mock;
 };
 
@@ -94,11 +99,63 @@ beforeEach(() => {
   // Default: no existing articles (all new).
   mockPrisma.article.findMany.mockResolvedValue([]);
   mockPrisma.article.create.mockResolvedValue({ id: "art_1" });
+  mockPrisma.article.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.source.findMany.mockResolvedValue([]);
   mockPrisma.category.findUnique.mockResolvedValue(null);
   mockPrisma.category.create.mockResolvedValue({ id: "cat_1" });
   mockPrisma.category.upsert.mockResolvedValue({ id: "cat_1" });
   mockPrisma.feedHealth.findUnique.mockResolvedValue(null);
+  mockPrisma.ingestionRun.updateMany.mockResolvedValue({ count: 0 });
+});
+
+describe("markStaleIngestionRuns", () => {
+  it("closes runs older than the worker timeout", async () => {
+    mockPrisma.ingestionRun.updateMany.mockResolvedValue({ count: 1 });
+    const now = new Date("2026-10-19T12:00:00.000Z");
+
+    await expect(markStaleIngestionRuns(now)).resolves.toBe(1);
+
+    expect(mockPrisma.ingestionRun.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: "running",
+        startedAt: { lt: new Date("2026-10-19T11:30:00.000Z") },
+      },
+      data: {
+        status: "failed",
+        completedAt: now,
+        errorMessage: "Marked failed because the run did not finish within 30 minutes.",
+      },
+    });
+  });
+});
+
+describe("retryExistingArticles", () => {
+  it("retries stored failed articles without creating a duplicate or touching user fields", async () => {
+    mockPrisma.article.findMany.mockResolvedValue([
+      {
+        id: "art_failed",
+        title: "Saved article",
+        excerpt: "Original excerpt",
+        summary: null,
+      },
+    ]);
+
+    const result = await retryExistingArticles("en", 10);
+
+    expect(result).toEqual({ attempted: 1, completed: 1, failed: 0 });
+    expect(mockSummarize).toHaveBeenCalledWith("Saved article", "Original excerpt", "en");
+    expect(mockPrisma.article.create).not.toHaveBeenCalled();
+    expect(mockPrisma.article.updateMany).toHaveBeenCalledWith({
+      where: { id: "art_failed", processingStatus: { in: ["pending", "failed"] } },
+      data: {
+        aiSummary: "Tóm tắt",
+        relevanceScore: 7,
+        relevanceExplanation: "Quan trọng",
+        tags: ["ai"],
+        processingStatus: "completed",
+      },
+    });
+  });
 });
 
 describe("processSource — dedup by canonical URL", () => {

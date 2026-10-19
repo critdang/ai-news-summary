@@ -13,6 +13,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
       ) {
         if (e.key === "Escape") {
           (e.target as HTMLElement).blur();
+          shortcuts.Escape?.();
         }
         return;
       }

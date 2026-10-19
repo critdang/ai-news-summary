@@ -6,7 +6,7 @@ import { cleanTrackingParams } from "../utils/url-cleaner.ts";
 const parser = new Parser({
   timeout: 20000,
   headers: {
-    "User-Agent": "Feed2040/1.0 RSS Reader",
+    "User-Agent": "AI-News-Summary/1.0 RSS Reader",
   },
   customFields: {
     item: [["media:content", "mediaContent"]],
@@ -93,7 +93,7 @@ export async function parseFeed(url: string): Promise<ParsedFeed> {
     // Feeds with many items can be several MB; keep a generous cap (rss-parser
     // previously had none) while still bounding memory.
     maxBytes: 15_000_000,
-    headers: { "User-Agent": "Feed2040/1.0 RSS Reader" },
+    headers: { "User-Agent": "AI-News-Summary/1.0 RSS Reader" },
   });
   const feed = await parser.parseString(text);
 
@@ -144,7 +144,7 @@ export async function discoverFeedUrls(url: string): Promise<string[]> {
   try {
     const { text: html } = await safeFetchText(url, {
       timeoutMs: 10000,
-      headers: { "User-Agent": "Feed2040/1.0 RSS Reader" },
+      headers: { "User-Agent": "AI-News-Summary/1.0 RSS Reader" },
     });
 
     // Match <link> tags with rel="alternate" and RSS/Atom types
