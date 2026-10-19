@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "ingest": "node --env-file-if-exists=.env --experimental-strip-types scripts/ingest-runner.mjs",
+    "cleanup": "node --env-file-if-exists=.env --experimental-strip-types scripts/cleanup.ts",
     "lint": "eslint",
     "test": "jest --config jest.config.ts",
     "test:ci": "jest --config jest.config.ts --ci"

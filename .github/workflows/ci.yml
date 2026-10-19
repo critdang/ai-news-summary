@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/phase-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Lint Phase 3 ingestion and retention files
+        run: >-
+          npm run lint --
+          src/lib/retention.ts
+          src/lib/categoryUtils.ts
+          src/lib/aiProvider.ts
+          src/lib/__tests__/retention.test.ts
+          scripts/ingest.ts
+          scripts/cleanup.ts
+          scripts/__tests__/cleanup.test.ts
+          scripts/__tests__/ingest.test.ts
+      - run: npm test -- --runInBand
+      - run: npx tsc --noEmit --incremental false
+      - run: npx prisma validate
+      - run: npx next build --webpack
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=public

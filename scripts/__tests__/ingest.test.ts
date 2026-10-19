@@ -8,14 +8,14 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { processSource } from "../ingest";
+import { ensureDefaultCategories, processSource } from "../ingest";
 
 // Mock Prisma so no real database is touched.
 jest.mock("@/lib/prisma", () => ({
   prisma: {
     source: { update: jest.fn(), findMany: jest.fn() },
     article: { findMany: jest.fn(), create: jest.fn() },
-    category: { findUnique: jest.fn(), create: jest.fn() },
+    category: { findUnique: jest.fn(), create: jest.fn(), upsert: jest.fn() },
     feedHealth: {
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -63,7 +63,7 @@ import { canonicalizeUrl } from "@/lib/urlUtils";
 const mockPrisma = prisma as unknown as {
   source: { update: jest.Mock; findMany: jest.Mock };
   article: { findMany: jest.Mock; create: jest.Mock };
-  category: { findUnique: jest.Mock; create: jest.Mock };
+  category: { findUnique: jest.Mock; create: jest.Mock; upsert: jest.Mock };
   feedHealth: {
     findUnique: jest.Mock;
     update: jest.Mock;
@@ -97,6 +97,7 @@ beforeEach(() => {
   mockPrisma.source.findMany.mockResolvedValue([]);
   mockPrisma.category.findUnique.mockResolvedValue(null);
   mockPrisma.category.create.mockResolvedValue({ id: "cat_1" });
+  mockPrisma.category.upsert.mockResolvedValue({ id: "cat_1" });
   mockPrisma.feedHealth.findUnique.mockResolvedValue(null);
 });
 
@@ -208,6 +209,19 @@ describe("processSource — dedup by canonical URL", () => {
       category: "AI",
     });
     expect(mockParseFeed).toHaveBeenCalledWith("https://example.com/feed.xml");
+  });
+});
+
+describe("default categories", () => {
+  it("upserts the six supported categories idempotently", async () => {
+    await ensureDefaultCategories();
+
+    expect(mockPrisma.category.upsert).toHaveBeenCalledTimes(6);
+    expect(mockPrisma.category.upsert).toHaveBeenCalledWith({
+      where: { slug: "3d-modeling-cad" },
+      update: {},
+      create: { name: "3D Modeling/CAD", slug: "3d-modeling-cad", sortOrder: 4 },
+    });
   });
 });
 

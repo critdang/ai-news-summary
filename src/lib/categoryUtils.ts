@@ -1,4 +1,13 @@
 /** Convert a category label into a stable ASCII slug for its unique key. */
+export const DEFAULT_CATEGORIES = [
+  "AI/LLMs",
+  "Software Engineering",
+  "Data Science",
+  "3D Printing",
+  "3D Modeling/CAD",
+  "Maker Projects",
+] as const;
+
 export function categorySlug(name: string): string {
   return (
     name

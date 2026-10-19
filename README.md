@@ -14,7 +14,7 @@ Phase and setup details are in [the project blueprint](docs/PROJECT_BLUEPRINT.md
 
 ## Local development
 
-Requirements: Node.js 20 or later and npm.
+Requirements: Node.js 22.9 or later and npm.
 
 ```sh
 npm ci
@@ -33,7 +33,9 @@ npx tsc --noEmit --incremental false
 npx next build --webpack
 ```
 
-Database migrations and deployment are described in the project documentation. Review a migration before applying it to any persistent database.
+`npm run ingest` runs one ingestion pass. `npm run cleanup` only previews eligible expired rows; use `npm run cleanup -- --apply` to delete eligible rows. Cleanup retains bookmarked articles and any article with a note. Review database migrations before applying them to a persistent database.
+
+GitHub Actions operations, required repository secrets, the UTC schedule, and cleanup modes are documented in [Phase 3 operations](docs/PHASE3_OPERATIONS.md).
 
 ## Attribution and license
 
