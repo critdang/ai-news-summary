@@ -2,7 +2,7 @@
 
 ## Scheduled ingestion
 
-`.github/workflows/ingest.yml` runs at 07:00 and 19:00 UTC and supports `workflow_dispatch` for manual runs. The worker processes each saved source independently, stores canonical-URL deduplicated articles, records feed health and run diagnostics, and continues after an individual source failure. It makes one AI call per new article and retries a bounded number of previously failed or pending summaries on each run. Gemini and Groq retries/fallback are server-side and only configured keys are attempted.
+`.github/workflows/ingest.yml` runs at 07:00 and 19:00 UTC and supports `workflow_dispatch` for manual runs. The worker fetches feeds with bounded concurrency, deduplicates canonical URLs across sources, and persists metadata with `pending` status before summarization. New summaries are grouped across feeds under item and serialized-character limits. Batch results are validated and only matching summaries are marked completed; failures remain stored for a later retry. The worker records feed health and continues after an individual source failure. Gemini and Groq retries/fallback are server-side and only configured keys are attempted.
 
 Configure these repository **Actions secrets**:
 
@@ -17,6 +17,10 @@ Optional repository **Actions variables**:
 - `MAX_ARTICLES_PER_RUN` (`50` total new articles across all feeds by default;
   divided evenly unless feed-specific allocations are configured)
 - `MAX_ARTICLE_RETRIES_PER_RUN` (`25` by default)
+- `MAX_ARTICLES_PER_BATCH` (`15`), `MAX_BATCH_INPUT_CHARS` (`20000`), and
+  `MAX_ARTICLE_EXCERPT_CHARS` (`1200`) bound AI request size.
+- `MAX_AI_CALLS_PER_RUN` (`20`) caps batch calls; `FEED_FETCH_CONCURRENCY`
+  (`4`) and `AI_BATCH_CONCURRENCY` (`2`) bound parallel work.
 
 The schedule is UTC and may run late under GitHub Actions load. Manual dispatch uses the same secrets and worker limits.
 

@@ -6,8 +6,8 @@
  * For each configured source:
  *   1. Fetch + parse the RSS feed (SSRF-safe via src/lib/rss/parser).
  *   2. Deduplicate by canonical URL.
- *   3. For each NEW article: generate an AI summary (Groq primary, Gemini fallback).
- *   4. Persist articles, update Source / FeedHealth / IngestionRun.
+ *   3. Persist new article metadata before summarizing cross-feed batches.
+ *   4. Update only validated AI fields, plus Source / FeedHealth / IngestionRun.
  *
  * Reliability:
  *   - One source failing does NOT abort other sources (partial success).
@@ -22,10 +22,15 @@
 
 import { prisma } from "../src/lib/prisma.ts";
 import { parseFeed } from "../src/lib/rss/parser.ts";
-import { summarizeArticle, type AIResult } from "../src/lib/aiProvider.ts";
+import {
+  summarizeArticle,
+  summarizeBatch,
+  type BatchArticleInput,
+} from "../src/lib/aiProvider.ts";
 import { canonicalizeUrl } from "../src/lib/urlUtils.ts";
 import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
 import { allocateSourceArticleLimits } from "../src/lib/sourceLimits.ts";
+import { mapWithConcurrency, prepareArticleBatches } from "../src/lib/batchProcessing.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -38,6 +43,12 @@ const configuredRetryLimit = Number(process.env.MAX_ARTICLE_RETRIES_PER_RUN);
 const MAX_ARTICLE_RETRIES_PER_RUN = Number.isFinite(configuredRetryLimit)
   ? Math.max(0, Math.floor(configuredRetryLimit))
   : 25;
+const MAX_ARTICLES_PER_BATCH = Math.max(1, Number(process.env.MAX_ARTICLES_PER_BATCH) || 15);
+const MAX_BATCH_INPUT_CHARS = Math.max(500, Number(process.env.MAX_BATCH_INPUT_CHARS) || 20000);
+const MAX_ARTICLE_EXCERPT_CHARS = Math.max(0, Number(process.env.MAX_ARTICLE_EXCERPT_CHARS) || 1200);
+const MAX_AI_CALLS_PER_RUN = Math.max(1, Number(process.env.MAX_AI_CALLS_PER_RUN) || 20);
+const FEED_FETCH_CONCURRENCY = Math.max(1, Number(process.env.FEED_FETCH_CONCURRENCY) || 4);
+const AI_BATCH_CONCURRENCY = Math.max(1, Number(process.env.AI_BATCH_CONCURRENCY) || 2);
 const DEFAULT_LANGUAGE = process.env.DEFAULT_LANGUAGE || "vi";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,6 +63,23 @@ interface SourceResult {
   skipped: number;
   aiCalls: number;
   aiFailures: number;
+  error?: string;
+}
+
+interface ArticleCandidate extends BatchArticleInput {
+  sourceId: string;
+  url: string;
+  originalTitle: string;
+  summary: string | null;
+  imageUrl: string | null;
+}
+
+interface SourceFetchResult {
+  sourceId: string;
+  sourceUrl: string;
+  fetched: number;
+  skipped: number;
+  candidates: ArticleCandidate[];
   error?: string;
 }
 
@@ -108,27 +136,24 @@ export async function markStaleIngestionRuns(now = new Date()): Promise<number> 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-source processing
+// Per-source fetch and normalization
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function processSource(
+export async function fetchSourceCandidates(
   source: {
     id: string;
     url: string;
     title: string;
     category: string;
-    maxArticlesPerRun?: number | null;
   },
-  options: { maxArticlesPerSource?: number; language?: string } = {}
-): Promise<SourceResult> {
-  const result: SourceResult = {
+  articleLimit: number
+): Promise<SourceFetchResult> {
+  const result: SourceFetchResult = {
     sourceId: source.id,
     sourceUrl: source.url,
     fetched: 0,
-    new: 0,
     skipped: 0,
-    aiCalls: 0,
-    aiFailures: 0,
+    candidates: [],
   };
 
   let parsed;
@@ -147,26 +172,7 @@ export async function processSource(
   }
 
   result.fetched = parsed.items.length;
-
-  const maxArticlesPerSource = options.maxArticlesPerSource ?? MAX_ARTICLES_PER_RUN;
-  const language = options.language ?? DEFAULT_LANGUAGE;
-  const items = parsed.items.slice(0, maxArticlesPerSource);
-
-  // Collect candidate canonical URLs to check for existing articles.
-  const candidateUrls = items
-    .map((item) => canonicalizeUrl(item.url))
-    .filter((u): u is string => u.length > 0);
-
-  const existingUrls = new Set<string>();
-  if (candidateUrls.length > 0) {
-    const existing = await prisma.article.findMany({
-      where: { canonicalUrl: { in: candidateUrls } },
-      select: { canonicalUrl: true },
-    });
-    for (const a of existing) existingUrls.add(a.canonicalUrl);
-  }
-
-  const seenCanonical = new Set<string>();
+  const items = parsed.items.slice(0, Math.max(0, articleLimit));
 
   for (const item of items) {
     const canonical = canonicalizeUrl(item.url);
@@ -174,63 +180,20 @@ export async function processSource(
       result.skipped++;
       continue;
     }
-
-    // Dedup: skip if already in DB or seen within this run.
-    if (existingUrls.has(canonical) || seenCanonical.has(canonical)) {
-      result.skipped++;
-      continue;
-    }
-    seenCanonical.add(canonical);
-
-    const title = item.title || "Untitled";
     const excerpt = item.summary || item.content || null;
-
-    // AI summarization (one call per article). A failure here does not lose the
-    // article — we save it with processingStatus "failed" and retry later.
-    let aiResult: AIResult | null = null;
-    result.aiCalls++;
-    try {
-      const outcome = await summarizeArticle(title, excerpt, language);
-      aiResult = outcome?.result ?? null;
-      if (!outcome) result.aiFailures++;
-    } catch {
-      result.aiFailures++;
-      // AI failed entirely; keep article with status "failed" for later retry.
-    }
-
-    try {
-      await prisma.article.create({
-        data: {
-          title,
-          url: item.url,
-          canonicalUrl: canonical,
-          excerpt: excerpt ? excerpt.slice(0, 2000) : null,
-          summary: item.summary ?? null,
-          aiSummary: aiResult?.summary ?? null,
-          relevanceScore: aiResult?.relevanceScore ?? null,
-          relevanceExplanation: aiResult?.relevanceExplanation ?? null,
-          processingStatus: aiResult ? "completed" : "failed",
-          publishedAt: item.publishedAt ?? null,
-          sourceId: source.id,
-          tags: aiResult?.tags ?? [],
-          bookmarked: false,
-        },
-      });
-      result.new++;
-    } catch (err) {
-      // A concurrent worker may insert the same canonical URL after our read.
-      // Only suppress Prisma's unique-key conflict; preserve real DB failures.
-      if (
-        typeof err === "object" &&
-        err !== null &&
-        "code" in err &&
-        (err as { code?: string }).code === "P2002"
-      ) {
-        result.skipped++;
-        continue;
-      }
-      throw err;
-    }
+    result.candidates.push({
+      canonicalUrl: canonical,
+      title: item.title || "Untitled",
+      originalTitle: item.title || "Untitled",
+      publisher: parsed.title || source.title,
+      publishedAt: item.publishedAt?.toISOString() ?? null,
+      excerpt: excerpt ? excerpt.slice(0, 2000) : null,
+      category: source.category,
+      sourceId: source.id,
+      url: item.url,
+      summary: item.summary ?? null,
+      imageUrl: item.imageUrl,
+    });
   }
 
   // Mark source as successfully fetched.
@@ -353,6 +316,7 @@ async function updateFeedHealth(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function runIngestion(): Promise<void> {
+  const startedAt = Date.now();
   await ensureDefaultCategories();
   await ensureSourcePreference();
 
@@ -413,49 +377,150 @@ export async function runIngestion(): Promise<void> {
     return;
   }
 
-  const sourceResults: SourceResult[] = [];
-  let totalNew = 0;
-  let totalFetched = 0;
+  const eligibleSources = sources.filter((source) => (sourceAllocations.get(source.id) ?? 0) > 0);
+  const fetchedSources = await mapWithConcurrency(eligibleSources, FEED_FETCH_CONCURRENCY, async (source) => {
+    const fetched = await fetchSourceCandidates(
+      { ...source, category: source.category.name },
+      sourceAllocations.get(source.id) ?? 0
+    );
+    return { source, fetched };
+  });
+  const sourceResults: SourceResult[] = fetchedSources.map(({ source, fetched }) => ({
+    sourceId: source.id,
+    sourceUrl: source.url,
+    fetched: fetched.fetched,
+    new: 0,
+    skipped: fetched.skipped,
+    aiCalls: 0,
+    aiFailures: 0,
+    ...(fetched.error ? { error: fetched.error } : {}),
+  }));
+  const totalFetched = fetchedSources.reduce((sum, item) => sum + item.fetched.fetched, 0);
+  let duplicateCount = fetchedSources.reduce((sum, item) => sum + item.fetched.skipped, 0);
+  const uniqueCandidates = new Map<string, ArticleCandidate>();
+  for (const { fetched } of fetchedSources) {
+    for (const candidate of fetched.candidates) {
+      if (uniqueCandidates.has(candidate.canonicalUrl)) duplicateCount++;
+      else uniqueCandidates.set(candidate.canonicalUrl, candidate);
+    }
+  }
+  const candidates = [...uniqueCandidates.values()];
+  const existing = candidates.length ? await prisma.article.findMany({
+    where: { canonicalUrl: { in: candidates.map((candidate) => candidate.canonicalUrl) } },
+    select: { canonicalUrl: true },
+  }) : [];
+  const existingUrls = new Set(existing.map((article) => article.canonicalUrl));
+  const newCandidates = candidates.filter((candidate) => !existingUrls.has(candidate.canonicalUrl));
+  duplicateCount += candidates.length - newCandidates.length;
 
-  // Process sources sequentially (one failing does not abort the others).
-  for (const source of sources) {
-    const sourceLimit = sourceAllocations.get(source.id) ?? 0;
-    if (sourceLimit === 0) {
-      console.log(`[ingest] ${source.title}: skipped (no articles allocated from the run budget)`);
+  if (newCandidates.length) {
+    await prisma.article.createMany({
+      data: newCandidates.map((candidate) => ({
+        title: candidate.originalTitle,
+        url: candidate.canonicalUrl,
+        canonicalUrl: candidate.canonicalUrl,
+        excerpt: candidate.excerpt,
+        summary: candidate.summary,
+        publishedAt: candidate.publishedAt ? new Date(candidate.publishedAt) : null,
+        sourceId: candidate.sourceId,
+        processingStatus: "pending",
+        aiSummary: null,
+      })),
+      skipDuplicates: true,
+    });
+  }
+  const pending = newCandidates.length ? await prisma.article.findMany({
+    where: {
+      canonicalUrl: { in: newCandidates.map((candidate) => candidate.canonicalUrl) },
+      processingStatus: "pending",
+      aiSummary: null,
+    },
+    select: { id: true, canonicalUrl: true },
+  }) : [];
+  const candidateByUrl = new Map(newCandidates.map((candidate) => [candidate.canonicalUrl, candidate]));
+  const prepared = prepareArticleBatches(
+    pending.flatMap((article) => {
+      const candidate = candidateByUrl.get(article.canonicalUrl);
+      return candidate ? [{
+        canonicalUrl: candidate.canonicalUrl,
+        title: candidate.title,
+        publisher: candidate.publisher,
+        publishedAt: candidate.publishedAt,
+        excerpt: candidate.excerpt,
+        category: candidate.category,
+      }] : [];
+    }),
+    { maxArticles: MAX_ARTICLES_PER_BATCH, maxInputChars: MAX_BATCH_INPUT_CHARS, maxExcerptChars: MAX_ARTICLE_EXCERPT_CHARS }
+  );
+  const articleByUrl = new Map(pending.map((article) => [article.canonicalUrl, article]));
+  let batchCalls = 0;
+  const inputCharacters = prepared.inputCharacters;
+  const batchesToRun = prepared.batches.slice(0, MAX_AI_CALLS_PER_RUN);
+  if (prepared.batches.length > batchesToRun.length) hadError = true;
+  const batchOutcomes = await mapWithConcurrency(batchesToRun, AI_BATCH_CONCURRENCY, async (batch) => {
+    batchCalls++;
+    const result = await summarizeBatch(batch, ingestionOptions.language);
+    return { batch, result };
+  });
+  let successfulSummaries = 0;
+  let batchFailures = 0;
+  let reportedInputTokens = 0;
+  let reportedOutputTokens = 0;
+  let tokenUsageComplete = true;
+  const usedProviders = new Set<string>();
+  const usedModels = new Set<string>();
+  const failedCanonicalUrls = new Set<string>();
+  for (const { batch, result } of batchOutcomes) {
+    if (!result) {
+      batchFailures += batch.length;
+      batch.forEach((article) => failedCanonicalUrls.add(article.canonicalUrl));
       continue;
     }
-    const result = await processSource(
-      { ...source, category: source.category.name },
-      {
-        ...ingestionOptions,
-        maxArticlesPerSource: sourceLimit,
+    usedProviders.add(result.provider);
+    usedModels.add(result.model);
+    if (typeof result.usage.inputTokens === "number" && typeof result.usage.outputTokens === "number") {
+      reportedInputTokens += result.usage.inputTokens;
+      reportedOutputTokens += result.usage.outputTokens;
+    } else {
+      tokenUsageComplete = false;
+    }
+    const outputByUrl = new Map(result.results.map((item) => [item.canonicalUrl, item]));
+    for (const batchArticle of batch) {
+      const output = outputByUrl.get(batchArticle.canonicalUrl);
+      const stored = articleByUrl.get(batchArticle.canonicalUrl);
+      if (!output || !stored) {
+        batchFailures++;
+        failedCanonicalUrls.add(batchArticle.canonicalUrl);
+        continue;
       }
-    ).catch((err) => {
-      hadError = true;
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        sourceId: source.id,
-        sourceUrl: source.url,
-        fetched: 0,
-        new: 0,
-        skipped: 0,
-        aiCalls: 0,
-        aiFailures: 0,
-        error: message,
-      };
-    });
-    sourceResults.push(result);
-    totalNew += result.new;
-    totalFetched += result.fetched;
-    totalAI += result.aiCalls;
-    totalAIFailures += result.aiFailures;
-    if (result.error || result.aiFailures > 0) hadError = true;
-
-    console.log(
-      `[ingest] ${source.title} (${source.category}): fetched=${result.fetched} new=${result.new} skipped=${result.skipped} aiCalls=${result.aiCalls} aiFailures=${result.aiFailures}${
-        result.error ? " error=" + result.error : ""
-      }`
-    );
+      const updated = await prisma.article.updateMany({
+        where: { id: stored.id, processingStatus: "pending", aiSummary: null },
+        data: {
+          aiSummary: output.summary,
+          relevanceScore: output.relevanceScore,
+          relevanceExplanation: output.relevanceExplanation,
+          tags: output.tags,
+          processingStatus: "completed",
+        },
+      });
+      successfulSummaries += updated.count;
+      if (updated.count === 0) failedCanonicalUrls.add(batchArticle.canonicalUrl);
+    }
+  }
+  const totalNew = newCandidates.length;
+  totalAI += batchCalls;
+  totalAIFailures += batchFailures + prepared.skipped.length;
+  if (totalAIFailures > 0 || fetchedSources.some((item) => item.fetched.error)) hadError = true;
+  for (const sourceResult of sourceResults) {
+    sourceResult.new = newCandidates.filter((candidate) => candidate.sourceId === sourceResult.sourceId).length;
+    sourceResult.aiCalls = batchesToRun.filter((batch) => batch.some((article) =>
+      candidateByUrl.get(article.canonicalUrl)?.sourceId === sourceResult.sourceId
+    )).length;
+    sourceResult.aiFailures = newCandidates.filter((candidate) =>
+      candidate.sourceId === sourceResult.sourceId && failedCanonicalUrls.has(candidate.canonicalUrl)
+    ).length;
+    const error = fetchedSources.find((item) => item.fetched.sourceId === sourceResult.sourceId)?.fetched.error;
+    if (error) sourceResult.error = error;
   }
 
   const status: RunResult["status"] =
@@ -489,7 +554,7 @@ export async function runIngestion(): Promise<void> {
   });
 
   console.log(
-    `[ingest] Run ${run.id} ${status}: sources=${sources.length} new=${totalNew} aiCalls=${totalAI} aiFailures=${totalAIFailures}`
+    `[ingest] Run ${run.id} ${status}: sources=${sources.length} fetched=${totalFetched} new=${totalNew} duplicates=${duplicateCount} batches=${batchCalls} providers=${[...usedProviders].join(",") || "none"} models=${[...usedModels].join(",") || "none"} inputChars=${inputCharacters} estimatedInputTokens=${Math.ceil(inputCharacters / 4)} reportedInputTokens=${tokenUsageComplete ? reportedInputTokens : "partial/unavailable"} reportedOutputTokens=${tokenUsageComplete ? reportedOutputTokens : "partial/unavailable"} summaries=${successfulSummaries} aiFailures=${totalAIFailures} durationMs=${Date.now() - startedAt}`
   );
 }
 

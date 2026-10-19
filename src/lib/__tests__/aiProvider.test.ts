@@ -6,7 +6,7 @@
  * fetch is mocked so no real API calls are made.
  */
 
-import { summarizeArticle, resetProviderCacheForTests } from "@/lib/aiProvider";
+import { summarizeArticle, summarizeBatch, resetProviderCacheForTests } from "@/lib/aiProvider";
 
 // Helper to mock fetch with a given response.
 function mockFetch(response: {
@@ -193,5 +193,59 @@ describe("summarizeArticle — structured output", () => {
     process.env.GEMINI_API_KEY = origGemini;
     process.env.GROQ_API_KEY = origGroq;
     resetProviderCacheForTests();
+  });
+});
+
+describe("summarizeBatch — keyed structured output", () => {
+  it("validates canonical URL keys and returns provider token usage", async () => {
+    mockFetch({
+      ok: true,
+      status: 200,
+      json: {
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify({ results: [{
+            canonicalUrl: "https://example.com/a",
+            summary: "Useful update",
+            relevanceScore: 7,
+            relevanceExplanation: "Relevant to the audience",
+            tags: ["ai"],
+          }] }) }] },
+        }],
+        usageMetadata: { promptTokenCount: 123, candidatesTokenCount: 45 },
+      },
+    });
+    const result = await summarizeBatch([{
+      canonicalUrl: "https://example.com/a",
+      title: "A",
+      publisher: "Example",
+      publishedAt: null,
+      excerpt: "Article text",
+      category: "AI",
+    }], "en");
+    expect(result?.provider).toBe("gemini");
+    expect(result?.results[0].canonicalUrl).toBe("https://example.com/a");
+    expect(result?.usage).toEqual({ inputTokens: 123, outputTokens: 45 });
+  });
+
+  it("rejects unknown URL keys and falls back to the other provider", async () => {
+    const responses = [
+      { ok: true, status: 200, json: { candidates: [{ content: { parts: [{ text: JSON.stringify({ results: [{ canonicalUrl: "https://wrong.test/", summary: "x", relevanceScore: 1, relevanceExplanation: "x", tags: [] }] }) }] } }] } },
+      { ok: true, status: 200, json: { choices: [{ message: { content: JSON.stringify({ results: [{ canonicalUrl: "https://example.com/a", summary: "Fallback", relevanceScore: 6, relevanceExplanation: "Useful", tags: [] }] }) } }] } },
+    ];
+    let index = 0;
+    (globalThis.fetch as jest.Mock) = jest.fn(async () => {
+      const response = responses[index++];
+      return { ...response, json: async () => response.json, text: async () => "", headers: new Headers() } as Response;
+    });
+    const result = await summarizeBatch([{
+      canonicalUrl: "https://example.com/a",
+      title: "A",
+      publisher: "Example",
+      publishedAt: null,
+      excerpt: null,
+      category: "AI",
+    }], "en");
+    expect(result?.provider).toBe("groq");
+    expect(result?.results[0].summary).toBe("Fallback");
   });
 });

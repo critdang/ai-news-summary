@@ -37,10 +37,13 @@ flowchart TD
      metadata and excerpts; it does not fetch full article pages.
    - Canonicalizes article URLs and checks the database's unique canonical URL
      constraint so reruns and concurrent inserts do not create duplicates.
-   - Calls the AI provider once per new article, then retries existing pending
-     or failed summaries on later runs within a configured per-run limit.
-   - Persists article metadata, summaries, relevance scores, feed health, and
-     ingestion run diagnostics.
+   - Fetches feeds concurrently with a configured bound, then deduplicates
+     candidates across all feeds using canonical URLs.
+   - Persists new article metadata as pending before sending bounded cross-feed
+     batches to Gemini/Groq. Valid results update only the corresponding AI
+     fields; missing or failed summaries remain available for a later retry.
+   - Retries existing pending or failed summaries within a configured per-run
+     limit and records feed health plus ingestion diagnostics.
 4. **Retention job** (also a GitHub Action) deletes non‑bookmarked articles older than the configured retention window.
 5. **AI Provider Wrapper** abstracts Gemini, Groq, and deterministic mock mode,
    handling timeouts, provider fallback, retry guidance, and exponential back‑off.
