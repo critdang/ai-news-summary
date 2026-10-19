@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Database,
+  RefreshCw,
   Settings as SettingsIcon,
   SlidersHorizontal,
 } from "lucide-react";
@@ -35,6 +36,7 @@ type Source = {
   lastFetched: Date | null;
   errorCount: number;
   fetchError: string | null;
+  maxArticlesPerRun: number | null;
   _count: { articles: number };
   health: { consecutiveFailures: number; lastSuccess: Date | null; lastError: string | null } | null;
 };
@@ -84,6 +86,10 @@ export default function SettingsPage() {
   });
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
+  const [refreshingPreferences, setRefreshingPreferences] = useState(false);
+  const [sourceLimitDrafts, setSourceLimitDrafts] = useState<Record<string, string>>({});
+  const [savingSourceLimit, setSavingSourceLimit] = useState<string | null>(null);
+  const [sourceLimitMessages, setSourceLimitMessages] = useState<Record<string, string>>({});
   const router = useRouter();
 
   // Add source form
@@ -98,6 +104,9 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Failed to load sources");
       const data = await res.json();
       setSources(data.data);
+      setSourceLimitDrafts(Object.fromEntries(
+        data.data.map((source: Source) => [source.id, source.maxArticlesPerRun == null ? "" : String(source.maxArticlesPerRun)])
+      ));
     } catch {
       /* ignore */
     }
@@ -115,14 +124,16 @@ export default function SettingsPage() {
     }
   }, []);
 
-  const fetchPreferences = useCallback(async () => {
+  const fetchPreferences = useCallback(async (): Promise<Preferences | null> => {
     try {
-      const res = await fetch("/api/preferences");
+      const res = await fetch("/api/preferences", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load preferences");
       const data = await res.json();
       setPreferences(data.data);
+      return data.data as Preferences;
     } catch {
       setError("Không tải được cài đặt. Hãy thử tải lại trang.");
+      return null;
     }
   }, []);
 
@@ -152,6 +163,47 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : "Không thể lưu cài đặt");
     } finally {
       setSavingPreferences(false);
+    }
+  };
+
+  const handleRefreshPreferences = async () => {
+    setError(null);
+    setPreferencesMessage(null);
+    setRefreshingPreferences(true);
+    const saved = await fetchPreferences();
+    if (saved) {
+      setPreferencesMessage(`Đã tải cài đặt đã lưu. Giới hạn chung: ${saved.maxArticlesPerSource} bài mỗi nguồn.`);
+    }
+    setRefreshingPreferences(false);
+  };
+
+  const handleSaveSourceLimit = async (source: Source) => {
+    const draft = sourceLimitDrafts[source.id] ?? "";
+    const value = draft.trim() === "" ? null : Number(draft);
+    if (value !== null && (!Number.isInteger(value) || value < 1 || value > 50)) {
+      setError("Giới hạn mỗi nguồn phải từ 1 đến 50, hoặc để trống để dùng giới hạn chung.");
+      return;
+    }
+
+    setError(null);
+    setSavingSourceLimit(source.id);
+    setSourceLimitMessages((current) => ({ ...current, [source.id]: "" }));
+    try {
+      const res = await fetch(`/api/sources/${source.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxArticlesPerRun: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể lưu giới hạn nguồn");
+      setSources((current) => current.map((item) => item.id === source.id
+        ? { ...item, maxArticlesPerRun: data.data.maxArticlesPerRun }
+        : item));
+      setSourceLimitMessages((current) => ({ ...current, [source.id]: value === null ? "Dùng giới hạn chung" : "Đã lưu" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể lưu giới hạn nguồn");
+    } finally {
+      setSavingSourceLimit(null);
     }
   };
 
@@ -340,7 +392,7 @@ export default function SettingsPage() {
                         </div>
                       ) : (
                         sources.map((s) => (
-                          <div key={s.id} className="p-3 flex items-center justify-between gap-3 hover:bg-muted/50 transition-colors">
+                          <div key={s.id} className="p-3 flex flex-wrap items-center justify-between gap-3 hover:bg-muted/50 transition-colors">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <h3 className="text-sm font-semibold text-foreground truncate">
@@ -369,6 +421,28 @@ export default function SettingsPage() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5">
+                              <label className="sr-only" htmlFor={`source-limit-${s.id}`}>Giới hạn bài viết cho {s.title}</label>
+                              <Input
+                                id={`source-limit-${s.id}`}
+                                type="number"
+                                min={1}
+                                max={50}
+                                step={1}
+                                placeholder={String(preferences.maxArticlesPerSource)}
+                                value={sourceLimitDrafts[s.id] ?? ""}
+                                onChange={(event) => setSourceLimitDrafts((current) => ({ ...current, [s.id]: event.target.value }))}
+                                className="h-8 w-20 text-xs"
+                                aria-describedby={`source-limit-help-${s.id}`}
+                              />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleSaveSourceLimit(s)}
+                                disabled={savingSourceLimit === s.id}
+                                className="h-8 px-2 text-xs"
+                              >
+                                {savingSourceLimit === s.id ? <Loader2 size={12} className="animate-spin" /> : "Lưu"}
+                              </Button>
                               {s.health && s.health.consecutiveFailures > 0 && (
                                 <AlertTriangle size={12} className="text-destructive" />
                               )}
@@ -385,6 +459,10 @@ export default function SettingsPage() {
                               >
                                 <Trash2 size={12} />
                               </Button>
+                            </div>
+                            <div className="w-full text-[10px] text-muted-foreground" id={`source-limit-help-${s.id}`}>
+                              {sourceLimitDrafts[s.id] === "" ? `Đang dùng giới hạn chung: ${preferences.maxArticlesPerSource}` : `Riêng nguồn này: ${sourceLimitDrafts[s.id]}`}
+                              {sourceLimitMessages[s.id] ? ` · ${sourceLimitMessages[s.id]}` : ""}
                             </div>
                           </div>
                         ))
@@ -447,11 +525,17 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="preferences">
               <Card className="mx-auto max-w-2xl">
-                <CardHeader>
-                  <CardTitle className="text-sm">Tuỳ chọn đọc và ingestion</CardTitle>
+                <CardHeader className="flex flex-row items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-sm">Tuỳ chọn đọc và ingestion</CardTitle>
                   <p className="text-xs text-muted-foreground">
                     Các giá trị này được lưu trong Supabase và áp dụng cho những lần worker tiếp theo.
                   </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleRefreshPreferences()} disabled={refreshingPreferences}>
+                    {refreshingPreferences ? <Loader2 size={14} className="mr-2 animate-spin" /> : <RefreshCw size={14} className="mr-2" />}
+                    Tải cài đặt đã lưu
+                  </Button>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSavePreferences} className="space-y-5">

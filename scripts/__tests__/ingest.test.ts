@@ -191,6 +191,30 @@ describe("processSource — dedup by canonical URL", () => {
     );
   });
 
+  it("honors the per-source article limit when slicing parsed feed items", async () => {
+    mockParseFeed.mockResolvedValue({
+      ...mockParsedFeed,
+      items: [
+        mockParsedFeed.items[0],
+        { ...mockParsedFeed.items[0], title: "Second article", url: "https://example.com/second" },
+        { ...mockParsedFeed.items[0], title: "Third article", url: "https://example.com/third" },
+      ],
+    });
+
+    await processSource(
+      {
+        id: "src_preferred",
+        url: "https://example.com/feed.xml",
+        title: "Preferred source",
+        category: "AI",
+      },
+      { maxArticlesPerSource: 2 }
+    );
+
+    expect(mockPrisma.article.findMany.mock.calls[0][0].where.canonicalUrl.in).toHaveLength(2);
+    expect(mockPrisma.article.create).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps an article when both AI providers fail and records the failure", async () => {
     mockSummarize.mockResolvedValue(null);
 

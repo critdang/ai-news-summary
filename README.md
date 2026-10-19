@@ -35,6 +35,12 @@ npx next build --webpack
 
 `npm run ingest` runs one ingestion pass and retries a bounded number of saved failed summaries. Set `AI_PROVIDER=mock` to exercise summary processing without calling a hosted AI provider. `npm run cleanup` only previews eligible expired rows; use `npm run cleanup -- --apply` to delete eligible rows. Cleanup retains bookmarked articles and any article with a note. Review database migrations before applying them to a persistent database.
 
+In Settings, the global new-article limit applies to every feed unless a
+feed-specific limit is set under **Sources**. Leave a feed limit blank to inherit
+the global value. The saved-settings refresh button only reloads preferences; it
+does not start ingestion or fetch RSS feeds. Apply pending Prisma migrations
+before using new database fields.
+
 In the reader, press `J`/`K` to move between articles, `/` to focus search, `B` to toggle the selected bookmark, and `Escape` to close the article panel.
 
 GitHub Actions operations, required repository secrets, the UTC schedule, and cleanup modes are documented in [Phase 3 operations](docs/PHASE3_OPERATIONS.md). Vercel deployment, reader settings, and operational checks are documented in [Phase 4 deployment](docs/PHASE4_DEPLOYMENT.md).

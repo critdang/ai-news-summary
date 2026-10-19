@@ -25,6 +25,7 @@ import { parseFeed } from "../src/lib/rss/parser.ts";
 import { summarizeArticle, type AIResult } from "../src/lib/aiProvider.ts";
 import { canonicalizeUrl } from "../src/lib/urlUtils.ts";
 import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
+import { effectiveSourceArticleLimit } from "../src/lib/sourceLimits.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -116,6 +117,7 @@ export async function processSource(
     url: string;
     title: string;
     category: string;
+    maxArticlesPerRun?: number | null;
   },
   options: { maxArticlesPerSource?: number; language?: string } = {}
 ): Promise<SourceResult> {
@@ -418,7 +420,13 @@ export async function runIngestion(): Promise<void> {
   for (const source of sources) {
     const result = await processSource(
       { ...source, category: source.category.name },
-      ingestionOptions
+      {
+        ...ingestionOptions,
+        maxArticlesPerSource: effectiveSourceArticleLimit(
+          source.maxArticlesPerRun,
+          ingestionOptions.maxArticlesPerSource
+        ),
+      }
     ).catch((err) => {
       hadError = true;
       const message = err instanceof Error ? err.message : String(err);

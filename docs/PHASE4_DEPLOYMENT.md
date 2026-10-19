@@ -3,23 +3,25 @@
 ## User preferences
 
 The Settings → Tuỳ chọn page saves summary language, article retention (30–60
-days), and the ingestion limit (1–50 articles per source) in the existing
-`UserPreference` row. The ingestion worker reads the saved language and limit at
-the start of each run. The cleanup worker reads the saved retention period.
-Changes apply to later scheduled runs. AI provider credentials and provider/model
-selection remain server-side environment configuration; they are not exposed in
-the reader settings or browser.
+days), and the global ingestion limit (1–50 articles per source) in the existing
+`UserPreference` row. Settings → Nguồn allows a feed-specific limit (1–50); a
+blank value inherits the global limit. These saved limits apply on later worker
+runs. The Settings refresh action reloads saved preferences only and does not
+fetch feeds or start ingestion. The cleanup worker reads the saved retention
+period. AI provider credentials and provider/model selection remain server-side
+environment configuration; they are not exposed in the reader settings or
+browser.
 
 ## Deploy the reader to Vercel
 
 1. Import the GitHub repository into Vercel and select the Next.js framework.
 2. Add `DATABASE_URL` to the Vercel project environment variables. Use the
    Supabase transaction pooler URL for the serverless app.
-3. Apply the reviewed Prisma migration to the Supabase database before the first
-   reader request. The migration command uses `DIRECT_URL` when available:
+3. Apply the reviewed Prisma migrations to the Supabase database before the first
+   reader request. The migration command loads `.env` and uses `DIRECT_URL` when available:
 
    ```sh
-   npx prisma migrate deploy
+   node --env-file-if-exists=.env ./node_modules/prisma/build/index.js migrate deploy --config prisma/prisma.config.ts
    ```
 
 4. Deploy and confirm the reader loads and `/api/runs` and `/api/health` respond.
