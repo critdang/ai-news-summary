@@ -7,8 +7,10 @@ feeds and verify the saved global setting without starting an ingestion run.
 
 ## Scope
 
-- Add an optional per-source article limit (1–50); blank/inherit uses the saved
-  global limit.
+- Treat the saved global article limit as the total new-article budget per run
+  (1–50) and divide it evenly among feeds by default.
+- Allow optional per-feed allocations (1–50); remaining budget is divided
+  evenly among feeds left on automatic allocation.
 - Apply the override when slicing items already returned by the existing RSS
   parser. Keep the current global limit, deduplication, and AI behavior.
 - Add an explicit Settings action to reload the saved preferences and show the

@@ -59,7 +59,7 @@ flowchart TD
 - **Secrets** (`SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`) are stored only in Vercel env vars (for API) or GitHub Actions secrets (for the worker).
 - **Authentication and row ownership are not implemented** for the reader/API. Keep hosted deployments private or behind Vercel Deployment Protection until authentication and RLS policies are added.
 - **Input validation**: RSS URLs are validated against a whitelist of `http/https` schemes, private‑IP blocks are blocked, and article content is sanitized before rendering.
-- **Rate‑limit handling**: AI wrapper honors provider `Retry-After` guidance for 429 responses and applies bounded exponential backoff for transient server errors. The application bounds new articles per source and summary retries per run.
+- **Rate‑limit handling**: AI wrapper honors provider `Retry-After` guidance for 429 responses and applies bounded exponential backoff for transient server errors. The application splits a total new-article budget across feeds and bounds summary retries per run.
 
 ---
 *All architectural decisions reflect the constraints in the AGENTS.md and aim for a fully serverless, low‑cost MVP.*

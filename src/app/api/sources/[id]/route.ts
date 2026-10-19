@@ -26,6 +26,22 @@ export async function PATCH(req: NextRequest, context: RouteContext): Promise<Ne
 
   try {
     const { id } = await context.params;
+    const [preferences, sources] = await Promise.all([
+      prisma.userPreference.findFirst({ select: { maxArticlesPerSource: true } }),
+      prisma.source.findMany({ select: { id: true, maxArticlesPerRun: true } }),
+    ]);
+    const totalLimit = preferences?.maxArticlesPerSource
+      ?? (Number(process.env.MAX_ARTICLES_PER_RUN || process.env.MAX_ARTICLES_PER_SOURCE) || 50);
+    const otherExplicitLimits = sources
+      .filter((source) => source.id !== id)
+      .reduce((total, source) => total + (source.maxArticlesPerRun ?? 0), 0);
+    if (value !== null && otherExplicitLimits + value > totalLimit) {
+      return NextResponse.json(
+        { error: `Per-feed allocations cannot exceed the total budget of ${totalLimit}. Lower another feed's allocation first.` },
+        { status: 400 }
+      );
+    }
+
     const source = await prisma.source.update({
       where: { id },
       data: { maxArticlesPerRun: value as number | null },

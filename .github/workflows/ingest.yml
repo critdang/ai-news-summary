@@ -34,7 +34,7 @@ jobs:
           AI_MODEL: ${{ vars.AI_MODEL || 'gemini-3.8-flash' }}
           GROQ_MODEL: ${{ vars.GROQ_MODEL || 'openai/gpt-oss-20b' }}
           DEFAULT_LANGUAGE: ${{ vars.DEFAULT_LANGUAGE || 'vi' }}
-          MAX_ARTICLES_PER_SOURCE: ${{ vars.MAX_ARTICLES_PER_SOURCE || '20' }}
+          MAX_ARTICLES_PER_RUN: ${{ vars.MAX_ARTICLES_PER_RUN || vars.MAX_ARTICLES_PER_SOURCE || '50' }}
           MAX_ARTICLE_RETRIES_PER_RUN: ${{ vars.MAX_ARTICLE_RETRIES_PER_RUN || '25' }}
           AI_TIMEOUT_MS: "15000"
           AI_MAX_RETRIES: "3"

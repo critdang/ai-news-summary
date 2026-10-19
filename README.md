@@ -35,11 +35,12 @@ npx next build --webpack
 
 `npm run ingest` runs one ingestion pass and retries a bounded number of saved failed summaries. Set `AI_PROVIDER=mock` to exercise summary processing without calling a hosted AI provider. `npm run cleanup` only previews eligible expired rows; use `npm run cleanup -- --apply` to delete eligible rows. Cleanup retains bookmarked articles and any article with a note. Review database migrations before applying them to a persistent database.
 
-In Settings, the global new-article limit applies to every feed unless a
-feed-specific limit is set under **Sources**. Leave a feed limit blank to inherit
-the global value. The saved-settings refresh button only reloads preferences; it
-does not start ingestion or fetch RSS feeds. Apply pending Prisma migrations
-before using new database fields.
+In Settings, the global new-article limit is the total budget across all feeds
+per run. The worker divides it evenly by default. Set a custom allocation under
+**Sources** for preferred feeds; the remaining budget is divided among feeds on
+automatic allocation. The saved-settings refresh button only reloads
+preferences; it does not start ingestion or fetch RSS feeds. Apply pending Prisma
+migrations before using new database fields.
 
 In the reader, press `J`/`K` to move between articles, `/` to focus search, `B` to toggle the selected bookmark, and `Escape` to close the article panel.
 

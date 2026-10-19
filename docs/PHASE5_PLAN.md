@@ -38,4 +38,4 @@ always-on worker, Python runtime, Redis, pgvector, MCP, or audio feature.
 - Retry updates only AI summary fields and processing status. Bookmarks and
   notes remain untouched.
 - Database URL, API keys, and populated `.env` values stay out of Git and logs.
-- Existing per-run and per-source limits continue to bound work.
+- Existing per-run article budgets and bounded summary retries continue to bound work.

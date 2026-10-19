@@ -14,7 +14,8 @@ Optional repository **Actions variables**:
 - `AI_PROVIDER` (`groq` by default; `gemini` or `mock` are also available),
   `AI_MODEL` (`gemini-3.8-flash`), `GROQ_MODEL` (`openai/gpt-oss-20b`)
 - `DEFAULT_LANGUAGE` (`vi` by default)
-- `MAX_ARTICLES_PER_SOURCE` (`20` by default)
+- `MAX_ARTICLES_PER_RUN` (`50` total new articles across all feeds by default;
+  divided evenly unless feed-specific allocations are configured)
 - `MAX_ARTICLE_RETRIES_PER_RUN` (`25` by default)
 
 The schedule is UTC and may run late under GitHub Actions load. Manual dispatch uses the same secrets and worker limits.

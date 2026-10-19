@@ -1,7 +1,7 @@
 export type PreferencesInput = {
   language: string;
   retentionDays: number;
-  maxArticlesPerSource: number;
+  maxArticlesPerRun: number;
 };
 
 export type PreferencesValidation =
@@ -23,8 +23,8 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     return { ok: false, error: "Retention must be a whole number from 30 to 60 days" };
   }
 
-  if (!Number.isInteger(input.maxArticlesPerSource) || Number(input.maxArticlesPerSource) < 1 || Number(input.maxArticlesPerSource) > 50) {
-    return { ok: false, error: "The per-source article limit must be a whole number from 1 to 50" };
+  if (!Number.isInteger(input.maxArticlesPerRun) || Number(input.maxArticlesPerRun) < 1 || Number(input.maxArticlesPerRun) > 50) {
+    return { ok: false, error: "The total article limit must be a whole number from 1 to 50" };
   }
 
   return {
@@ -32,7 +32,7 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     value: {
       language,
       retentionDays: Number(input.retentionDays),
-      maxArticlesPerSource: Number(input.maxArticlesPerSource),
+      maxArticlesPerRun: Number(input.maxArticlesPerRun),
     },
   };
 }

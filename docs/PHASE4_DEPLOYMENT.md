@@ -3,14 +3,15 @@
 ## User preferences
 
 The Settings → Tuỳ chọn page saves summary language, article retention (30–60
-days), and the global ingestion limit (1–50 articles per source) in the existing
-`UserPreference` row. Settings → Nguồn allows a feed-specific limit (1–50); a
-blank value inherits the global limit. These saved limits apply on later worker
-runs. The Settings refresh action reloads saved preferences only and does not
-fetch feeds or start ingestion. The cleanup worker reads the saved retention
-period. AI provider credentials and provider/model selection remain server-side
-environment configuration; they are not exposed in the reader settings or
-browser.
+days), and a total new-article budget (1–50) for each ingestion run. By default,
+the worker splits that budget evenly across configured feeds. Settings → Nguồn
+allows explicit per-feed allocations; the remaining budget is shared evenly
+among feeds left on automatic allocation. Explicit allocations must sum to no
+more than the total budget. The Settings refresh action reloads saved preferences
+only and does not fetch feeds or start ingestion. The cleanup worker reads the
+saved retention period. AI provider credentials and provider/model selection
+remain server-side environment configuration; they are not exposed in the reader
+settings or browser.
 
 ## Deploy the reader to Vercel
 
@@ -38,10 +39,10 @@ In GitHub repository **Settings → Secrets and variables → Actions**, configu
   `GEMINI_API_KEY` or `GROQ_API_KEY`.
 - Variables: optionally `AI_PROVIDER` (defaults to `groq`), `AI_MODEL`
   (defaults to `gemini-3.8-flash`), `GROQ_MODEL` (defaults to
-  `openai/gpt-oss-20b`), `DEFAULT_LANGUAGE`, `MAX_ARTICLES_PER_SOURCE`, and
+  `openai/gpt-oss-20b`), `DEFAULT_LANGUAGE`, `MAX_ARTICLES_PER_RUN`, and
   `MAX_ARTICLE_RETRIES_PER_RUN`.
 
-The worker uses saved language and per-source limit preferences on later runs.
+The worker uses saved language and the total article budget on later runs.
 The cleanup worker uses the saved retention setting. Workflow cron times are UTC;
 scheduled jobs can start late and are not a guaranteed uptime service. Use the
 workflow **Run workflow** action to trigger a run manually.

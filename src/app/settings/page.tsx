@@ -7,7 +7,7 @@
  * Single-user: no authentication required.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Rss,
@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { allocateSourceArticleLimits } from "@/lib/sourceLimits";
 
 type Source = {
   id: string;
@@ -56,7 +57,7 @@ type Run = {
 type Preferences = {
   language: string;
   retentionDays: number;
-  maxArticlesPerSource: number;
+  maxArticlesPerRun: number;
 };
 
 function formatRelative(date: Date | null): string | null {
@@ -82,7 +83,7 @@ export default function SettingsPage() {
   const [preferences, setPreferences] = useState<Preferences>({
     language: "vi",
     retentionDays: 45,
-    maxArticlesPerSource: 20,
+    maxArticlesPerRun: 20,
   });
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
@@ -91,6 +92,10 @@ export default function SettingsPage() {
   const [savingSourceLimit, setSavingSourceLimit] = useState<string | null>(null);
   const [sourceLimitMessages, setSourceLimitMessages] = useState<Record<string, string>>({});
   const router = useRouter();
+  const sourceAllocations = useMemo(
+    () => allocateSourceArticleLimits(sources, preferences.maxArticlesPerRun),
+    [sources, preferences.maxArticlesPerRun]
+  );
 
   // Add source form
   const [newUrl, setNewUrl] = useState("");
@@ -172,7 +177,7 @@ export default function SettingsPage() {
     setRefreshingPreferences(true);
     const saved = await fetchPreferences();
     if (saved) {
-      setPreferencesMessage(`Đã tải cài đặt đã lưu. Giới hạn chung: ${saved.maxArticlesPerSource} bài mỗi nguồn.`);
+      setPreferencesMessage(`Đã tải cài đặt đã lưu. Tổng ngân sách: ${saved.maxArticlesPerRun} bài mỗi lần chạy.`);
     }
     setRefreshingPreferences(false);
   };
@@ -428,7 +433,7 @@ export default function SettingsPage() {
                                 min={1}
                                 max={50}
                                 step={1}
-                                placeholder={String(preferences.maxArticlesPerSource)}
+                                placeholder={String(sourceAllocations.get(s.id) ?? 0)}
                                 value={sourceLimitDrafts[s.id] ?? ""}
                                 onChange={(event) => setSourceLimitDrafts((current) => ({ ...current, [s.id]: event.target.value }))}
                                 className="h-8 w-20 text-xs"
@@ -461,7 +466,7 @@ export default function SettingsPage() {
                               </Button>
                             </div>
                             <div className="w-full text-[10px] text-muted-foreground" id={`source-limit-help-${s.id}`}>
-                              {sourceLimitDrafts[s.id] === "" ? `Đang dùng giới hạn chung: ${preferences.maxArticlesPerSource}` : `Riêng nguồn này: ${sourceLimitDrafts[s.id]}`}
+                              {sourceLimitDrafts[s.id] === "" ? `Tự chia: ${sourceAllocations.get(s.id) ?? 0} bài` : `Phân bổ riêng: ${sourceLimitDrafts[s.id]} bài`}
                               {sourceLimitMessages[s.id] ? ` · ${sourceLimitMessages[s.id]}` : ""}
                             </div>
                           </div>
@@ -566,7 +571,7 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground">Bài đã lưu và bài có ghi chú sẽ được giữ lại.</p>
                     </div>
                     <div className="space-y-2">
-                      <label htmlFor="article-limit" className="text-sm font-medium">Giới hạn bài viết mỗi nguồn (1–50)</label>
+                      <label htmlFor="article-limit" className="text-sm font-medium">Tổng bài viết mỗi lần ingestion (1–50)</label>
                       <Input
                         id="article-limit"
                         type="number"
@@ -574,9 +579,10 @@ export default function SettingsPage() {
                         max={50}
                         step={1}
                         required
-                        value={preferences.maxArticlesPerSource}
-                        onChange={(e) => setPreferences((current) => ({ ...current, maxArticlesPerSource: Number(e.target.value) }))}
+                        value={preferences.maxArticlesPerRun}
+                        onChange={(e) => setPreferences((current) => ({ ...current, maxArticlesPerRun: Number(e.target.value) }))}
                       />
+                      <p className="text-xs text-muted-foreground">Đây là tổng ngân sách cho mọi nguồn. Nguồn chưa đặt phân bổ riêng sẽ được chia đều phần còn lại.</p>
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                       <Button type="submit" disabled={savingPreferences}>

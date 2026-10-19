@@ -29,7 +29,7 @@ Create a personal AI‑powered news reader focused on **Software Engineering, AI
 - **Retention Job** – `scripts/cleanup.ts` run as a separate GH Action.
 
 ## Risks & Mitigations
-- **Quota exhaustion** – limit articles per source, honor provider retry windows, and bound queued summary retries.
+- **Quota exhaustion** – cap total new articles per run across feeds, honor provider retry windows, and bound queued summary retries.
 - **Credential leakage** – never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser; keep it in GH Actions secrets.
 - **RSS source failures** – each source processed independently; failures logged but do not abort the run.
 - **Model failures** – fallback to alternative provider; persist partial results.

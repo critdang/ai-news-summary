@@ -13,7 +13,7 @@
  *   - One source failing does NOT abort other sources (partial success).
  *   - One AI provider failing falls back to the next; partial results are kept.
  *   - Runs are idempotent: re-running does not create duplicates.
- *   - Limits articles per source, body/excerpt size, and AI calls per run.
+ *   - Splits the total new-article budget across sources; also bounds body size and retries.
  *   - Never retries permanent errors; transient errors get exponential backoff.
  *
  * Secrets (SUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY) are read
@@ -25,15 +25,15 @@ import { parseFeed } from "../src/lib/rss/parser.ts";
 import { summarizeArticle, type AIResult } from "../src/lib/aiProvider.ts";
 import { canonicalizeUrl } from "../src/lib/urlUtils.ts";
 import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
-import { effectiveSourceArticleLimit } from "../src/lib/sourceLimits.ts";
+import { allocateSourceArticleLimits } from "../src/lib/sourceLimits.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_ARTICLES_PER_SOURCE = Number(
-  process.env.MAX_ARTICLES_PER_SOURCE
-) || 20;
+const MAX_ARTICLES_PER_RUN = Number(
+  process.env.MAX_ARTICLES_PER_RUN || process.env.MAX_ARTICLES_PER_SOURCE
+) || 50;
 const configuredRetryLimit = Number(process.env.MAX_ARTICLE_RETRIES_PER_RUN);
 const MAX_ARTICLE_RETRIES_PER_RUN = Number.isFinite(configuredRetryLimit)
   ? Math.max(0, Math.floor(configuredRetryLimit))
@@ -78,7 +78,7 @@ async function ensureSourcePreference(): Promise<void> {
         retentionDays: 45,
         aiProvider: process.env.AI_PROVIDER || "groq",
         aiModel: process.env.AI_MODEL || "gemini-3.8-flash",
-        maxArticlesPerSource: MAX_ARTICLES_PER_SOURCE,
+        maxArticlesPerSource: MAX_ARTICLES_PER_RUN,
       },
     });
   }
@@ -148,7 +148,7 @@ export async function processSource(
 
   result.fetched = parsed.items.length;
 
-  const maxArticlesPerSource = options.maxArticlesPerSource ?? MAX_ARTICLES_PER_SOURCE;
+  const maxArticlesPerSource = options.maxArticlesPerSource ?? MAX_ARTICLES_PER_RUN;
   const language = options.language ?? DEFAULT_LANGUAGE;
   const items = parsed.items.slice(0, maxArticlesPerSource);
 
@@ -362,10 +362,10 @@ export async function runIngestion(): Promise<void> {
   const savedArticleLimit = preferences?.maxArticlesPerSource;
   const ingestionOptions = {
     language: preferences?.language || DEFAULT_LANGUAGE,
-    maxArticlesPerSource:
+    totalArticleBudget:
       typeof savedArticleLimit === "number" && savedArticleLimit > 0
         ? savedArticleLimit
-        : MAX_ARTICLES_PER_SOURCE,
+        : MAX_ARTICLES_PER_RUN,
   };
 
   const staleRunCount = await markStaleIngestionRuns();
@@ -398,6 +398,7 @@ export async function runIngestion(): Promise<void> {
     include: { category: { select: { name: true } } },
     orderBy: [{ category: { name: "asc" } }, { title: "asc" }],
   });
+  const sourceAllocations = allocateSourceArticleLimits(sources, ingestionOptions.totalArticleBudget);
 
   if (sources.length === 0) {
     await prisma.ingestionRun.update({
@@ -418,14 +419,16 @@ export async function runIngestion(): Promise<void> {
 
   // Process sources sequentially (one failing does not abort the others).
   for (const source of sources) {
+    const sourceLimit = sourceAllocations.get(source.id) ?? 0;
+    if (sourceLimit === 0) {
+      console.log(`[ingest] ${source.title}: skipped (no articles allocated from the run budget)`);
+      continue;
+    }
     const result = await processSource(
       { ...source, category: source.category.name },
       {
         ...ingestionOptions,
-        maxArticlesPerSource: effectiveSourceArticleLimit(
-          source.maxArticlesPerRun,
-          ingestionOptions.maxArticlesPerSource
-        ),
+        maxArticlesPerSource: sourceLimit,
       }
     ).catch((err) => {
       hadError = true;
