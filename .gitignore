@@ -1,0 +1,21 @@
+/ai-daily-summary/
+/Feed2040/
+/rss-digest/
+/SummaRSS/
+
+# Node / Next.js outputs
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Local credentials and environment overrides (.env.example remains tracked)
+.env
+.env.local
+.env.*.local
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/

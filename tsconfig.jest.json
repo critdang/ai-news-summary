@@ -1,0 +1,21 @@
+/** Minimal tsconfig for Jest (extends the Next.js tsconfig). */
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "scripts/**/*", "jest.config.ts"],
+  "exclude": ["node_modules", ".next", "coverage"]
+}

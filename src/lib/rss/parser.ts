@@ -1,0 +1,195 @@
+import Parser from "rss-parser";
+import { validateFeedUrl } from "../utils/url-validator.ts";
+import { safeFetchText } from "../utils/safe-fetch.ts";
+import { cleanTrackingParams } from "../utils/url-cleaner.ts";
+
+const parser = new Parser({
+  timeout: 20000,
+  headers: {
+    "User-Agent": "Feed2040/1.0 RSS Reader",
+  },
+  customFields: {
+    item: [["media:content", "mediaContent"]],
+  },
+});
+
+export type ParsedFeed = {
+  title: string;
+  description: string | null;
+  siteUrl: string | null;
+  imageUrl: string | null;
+  language: string | null;
+  items: ParsedFeedItem[];
+};
+
+export type ParsedFeedItem = {
+  title: string;
+  url: string;
+  content: string | null;
+  summary: string | null;
+  author: string | null;
+  imageUrl: string | null;
+  publishedAt: Date | null;
+  guid: string | null;
+  enclosureUrl: string | null;
+  enclosureType: string | null;
+  enclosureDuration: string | null;
+};
+
+function extractImage(item: Record<string, unknown>): string | null {
+  // Try media:content
+  const mc = item.mediaContent as Record<string, unknown> | undefined;
+  if (mc) {
+    const attrs = mc.$ as Record<string, string> | undefined;
+    if (attrs?.url) return attrs.url;
+  }
+
+  // Try enclosure
+  const enc = item.enclosure as Record<string, string> | undefined;
+  if (enc?.url && enc.type?.startsWith("image")) return enc.url;
+
+  // Try extracting from content
+  const content = (item.content || item["content:encoded"]) as string | undefined;
+  if (content) {
+    // Match src with double, single, or no quotes (feeds vary).
+    const match = content.match(/<img[^>]+src=["']?([^"'\s>]+)/i);
+    if (match) return match[1];
+  }
+
+  return null;
+}
+
+const MAX_CONTENT_LENGTH = 100_000;
+
+function str(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "_" in (value as Record<string, unknown>)) {
+    return String((value as Record<string, unknown>)._);
+  }
+  if (value != null) return String(value);
+  return undefined;
+}
+
+// Parse a feed date, rejecting garbage. Some feeds emit invalid or absurd
+// dates (e.g. year 3018) that otherwise poison the "Today" filter and sort
+// order. Anything unparseable or more than a day in the future is dropped.
+function parseDate(iso: string | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  if (d.getTime() > Date.now() + 24 * 60 * 60 * 1000) return null;
+  return d;
+}
+
+export async function parseFeed(url: string): Promise<ParsedFeed> {
+  const validation = validateFeedUrl(url);
+  if (!validation.valid) {
+    throw new Error(validation.error ?? "Invalid feed URL");
+  }
+  // Fetch through the SSRF-hardened helper (redirect + DNS-rebinding safe),
+  // then parse the retrieved text rather than letting rss-parser fetch it.
+  const { text } = await safeFetchText(url, {
+    timeoutMs: 20000,
+    // Feeds with many items can be several MB; keep a generous cap (rss-parser
+    // previously had none) while still bounding memory.
+    maxBytes: 15_000_000,
+    headers: { "User-Agent": "Feed2040/1.0 RSS Reader" },
+  });
+  const feed = await parser.parseString(text);
+
+  return {
+    title: str(feed.title) || url,
+    description: str(feed.description) || null,
+    siteUrl: str(feed.link) || null,
+    imageUrl: str(feed.image?.url) || null,
+    language: str(feed.language) || null,
+    items: (feed.items || []).map((item) => {
+      const raw = item as unknown as Record<string, unknown>;
+      let content = str(raw["content:encoded"]) || str(item.content) || null;
+      if (content && content.length > MAX_CONTENT_LENGTH) {
+        content = content.slice(0, MAX_CONTENT_LENGTH);
+      }
+      const enc = raw.enclosure as Record<string, string> | undefined;
+      const encUrl = enc?.url || null;
+      const encType = enc?.type || null;
+      const encDuration = enc?.length || null;
+
+      return {
+        title: str(item.title) || "Untitled",
+        url: cleanTrackingParams(str(item.link) || ""),
+        content,
+        summary: str(item.contentSnippet)?.slice(0, 500) || null,
+        author: str(item.creator) || str(raw.author) || null,
+        imageUrl: extractImage(raw),
+        publishedAt: parseDate(item.isoDate),
+        guid: str(raw.guid) || str(raw.id) || str(item.link) || null,
+        enclosureUrl: encUrl,
+        enclosureType: encType,
+        enclosureDuration: encDuration,
+      };
+    }),
+  };
+}
+
+export async function previewFeed(url: string): Promise<ParsedFeed & { itemCount: number }> {
+  const feed = await parseFeed(url);
+  return {
+    ...feed,
+    itemCount: feed.items.length,
+    items: feed.items.slice(0, 5),
+  };
+}
+
+export async function discoverFeedUrls(url: string): Promise<string[]> {
+  try {
+    const { text: html } = await safeFetchText(url, {
+      timeoutMs: 10000,
+      headers: { "User-Agent": "Feed2040/1.0 RSS Reader" },
+    });
+
+    // Match <link> tags with rel="alternate" and RSS/Atom types
+    const linkPattern =
+      /<link[^>]+rel=["']alternate["'][^>]*>/gi;
+    const matches = html.match(linkPattern) || [];
+
+    const feedUrls: string[] = [];
+    const baseUrl = new URL(url);
+
+    for (const tag of matches) {
+      // Check for RSS or Atom type
+      const typeMatch = tag.match(/type=["']([^"']+)["']/i);
+      if (!typeMatch) continue;
+
+      const type = typeMatch[1].toLowerCase();
+      if (
+        type !== "application/rss+xml" &&
+        type !== "application/atom+xml" &&
+        type !== "application/feed+json"
+      ) {
+        continue;
+      }
+
+      // Extract href
+      const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+      if (!hrefMatch) continue;
+
+      const href = hrefMatch[1];
+
+      // Resolve relative URLs
+      try {
+        const resolved = new URL(href, baseUrl).toString();
+        if (!feedUrls.includes(resolved)) {
+          feedUrls.push(resolved);
+        }
+      } catch {
+        // Skip invalid URLs
+      }
+
+      if (feedUrls.length >= 10) break;
+    }
+
+    return feedUrls;
+  } catch {
+    return [];
+  }
+}

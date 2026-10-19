@@ -1,0 +1,112 @@
+// Simplified single-user schema for the AI News Summary MVP.
+// Adapted from Feed2040 (MIT, https://github.com/0xhav0c/Feed2040).
+//
+// Multi-user / next-auth / pgvector / Telegram / push-notification tables
+// were removed for the serverless single-user deployment. Auth can be added
+// later by reintroducing a User model and RLS policies.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Source {
+  id          String    @id @default(cuid())
+  title       String
+  url         String    @unique
+  categoryId  String
+  lastFetched DateTime?
+  errorCount  Int       @default(0)
+  fetchError  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  articles Article[]
+  health   FeedHealth?
+  category Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([categoryId])
+  @@index([url])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sources   Source[]
+
+  @@index([slug])
+}
+
+model Article {
+  id                   String    @id @default(cuid())
+  title                String
+  url                  String // canonical URL (tracking params stripped)
+  canonicalUrl         String // normalized URL used for dedup
+  excerpt              String?   @db.Text
+  summary              String?   @db.Text // publisher excerpt
+  aiSummary            String?   @db.Text // AI-generated summary
+  relevanceScore       Float? // 0-10 relevance score (AI interpretation)
+  relevanceExplanation String? // "why it matters" explanation
+  processingStatus     String // pending | completed | failed
+  publishedAt          DateTime?
+  firstSeenAt          DateTime  @default(now())
+  sourceId             String
+  source               Source    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  tags                 String[]  @default([])
+  bookmarked           Boolean   @default(false)
+  bookmarkNote         String?   @db.Text
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([canonicalUrl])
+  @@index([sourceId])
+  @@index([publishedAt])
+  @@index([bookmarked])
+  @@index([relevanceScore])
+}
+
+model IngestionRun {
+  id               String    @id @default(cuid())
+  status           String // running | completed | failed | partial
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  articleCount     Int       @default(0)
+  newCount         Int       @default(0)
+  errorCount       Int       @default(0)
+  errorMessage     String?
+  sourcesProcessed Int       @default(0)
+
+  @@index([status])
+  @@index([startedAt])
+}
+
+model FeedHealth {
+  id                  String    @id @default(cuid())
+  sourceId            String    @unique
+  consecutiveFailures Int       @default(0)
+  lastSuccess         DateTime?
+  lastError           String?
+  lastChecked         DateTime  @default(now())
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId])
+}
+
+model UserPreference {
+  id                   String   @id @default(cuid())
+  language             String   @default("vi") // summary language, default Vietnamese
+  retentionDays        Int      @default(45) // 30-60 configurable
+  aiProvider           String   @default("gemini")
+  aiModel              String   @default("gemini-1.5-flash")
+  maxArticlesPerSource Int      @default(20)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
