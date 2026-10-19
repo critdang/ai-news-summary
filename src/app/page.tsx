@@ -30,14 +30,17 @@ import {
   RefreshCw,
   Loader2,
   ChevronLeft,
+  Sparkles,
+  BookOpen,
+  Newspaper,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useKeyboardShortcuts } from "@/lib/hooks/useKeyboardShortcuts";
 import { nextArticleIndex } from "@/lib/readerNavigation";
@@ -76,6 +79,49 @@ type CategoryOption = { value: string; label: string; count: number };
 
 const PAGE_SIZE = 20;
 
+function ArticleReaderPanel({
+  article,
+  summaryLoading,
+  summaryError,
+  onSummarize,
+}: {
+  article: Article | null;
+  summaryLoading: boolean;
+  summaryError: string | null;
+  onSummarize: () => void;
+}) {
+  if (!article) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+        <BookOpen size={30} className="mb-3 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Choose an article to read</h2>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">Select a story from All Feeds. Generate an AI summary only when you need one.</p>
+      </div>
+    );
+  }
+  return (
+    <article className="space-y-4 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0"><p className="text-xs text-muted-foreground">{article.source?.title || "Unknown source"}</p><h1 className="mt-1 text-lg font-bold leading-snug">{article.title}</h1></div>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground"><BookOpen size={11} />Reading</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Badge variant="outline">{article.source?.category || "Other"}</Badge>
+        {article.publishedAt && <span className="inline-flex items-center gap-1"><Clock size={11} />{formatRelative(article.publishedAt)}</span>}
+        {article.relevanceScore != null && <span>Relevance {article.relevanceScore}/10</span>}
+      </div>
+      <Button onClick={onSummarize} disabled={summaryLoading || Boolean(article.aiSummary)} className="w-full">
+        {summaryLoading ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
+        {article.aiSummary ? "AI summary ready" : summaryLoading ? "Generating summary…" : "Generate AI summary"}
+      </Button>
+      {summaryError && <p role="alert" className="text-xs text-destructive">{summaryError}</p>}
+      {article.aiSummary && <section className="rounded-xl border border-primary/30 bg-primary/5 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles size={14} />AI Summary</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{article.aiSummary}</p>{article.relevanceExplanation && <p className="mt-3 border-t border-primary/10 pt-3 text-xs text-muted-foreground">{article.relevanceExplanation}</p>}</section>}
+      {(article.summary || article.excerpt) && <section><h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Newspaper size={13} />Article preview</h2><p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">{article.summary || article.excerpt}</p></section>}
+      <a href={article.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted"><ExternalLink size={13} />Read full article at {article.source?.title || "source"}</a>
+    </article>
+  );
+}
+
 function formatRelative(date: Date | null): string | null {
   if (!date) return null;
   const d = new Date(date);
@@ -107,9 +153,17 @@ const ArticleItem = memo(function ArticleItem({
   };
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       id={`article-${article.id}`}
       onClick={() => onSelect(article)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(article);
+        }
+      }}
       className={cn(
         "w-full flex items-start gap-3 rounded-xl border border-transparent p-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isSelected ? "bg-primary/5 border-primary/30" : "border-l-2 border-l-transparent",
@@ -179,7 +233,7 @@ const ArticleItem = memo(function ArticleItem({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 });
 
@@ -200,6 +254,8 @@ export default function ReaderPage() {
   const [sort, setSort] = useState("publishedAt:desc");
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -323,6 +379,28 @@ export default function ReaderPage() {
     }
   }, [articles]);
 
+  const summarizeSelectedArticle = useCallback(async () => {
+    if (!selectedArticle || selectedArticle.aiSummary || summaryLoading) return;
+    setSummaryError(null);
+    setSummaryLoading(true);
+    try {
+      const response = await fetch(`/api/articles/${selectedArticle.id}/summarize`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not summarize article");
+      const data = body.data;
+      setSelectedArticle((current) => current?.id === selectedArticle.id
+        ? { ...current, aiSummary: data.summary, relevanceScore: data.relevanceScore ?? current.relevanceScore, relevanceExplanation: data.relevanceExplanation ?? current.relevanceExplanation, processingStatus: "completed" }
+        : current);
+      setArticles((current) => current.map((article) => article.id === selectedArticle.id
+        ? { ...article, aiSummary: data.summary, relevanceScore: data.relevanceScore ?? article.relevanceScore, relevanceExplanation: data.relevanceExplanation ?? article.relevanceExplanation, processingStatus: "completed" }
+        : article));
+    } catch (cause) {
+      setSummaryError(cause instanceof Error ? cause.message : "Could not summarize article");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [selectedArticle, summaryLoading]);
+
   const selectRelativeArticle = useCallback((direction: -1 | 1) => {
     if (articles.length === 0) return;
     const currentIndex = selectedArticle
@@ -330,7 +408,7 @@ export default function ReaderPage() {
       : -1;
     const next = articles[nextArticleIndex(currentIndex, articles.length, direction)];
     setSelectedArticle(next);
-    setSheetOpen(true);
+    setSheetOpen(window.innerWidth < 1024);
     requestAnimationFrame(() => {
       document.getElementById(`article-${next.id}`)?.scrollIntoView({ block: "nearest" });
     });
@@ -392,10 +470,18 @@ export default function ReaderPage() {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => router.push("/briefing")}
+            className="h-7 px-2"
+          >
+            <Sparkles size={13} className="mr-1.5" />Daily Briefing
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => router.push("/settings")}
             className="h-7 px-2"
           >
-            Cài đặt
+            <SettingsIcon size={13} className="mr-1.5" />AI Settings
           </Button>
         </div>
       </header>
@@ -404,6 +490,11 @@ export default function ReaderPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar: categories */}
         <aside className="hidden md:flex md:w-[240px] flex-col border-r border-border bg-muted/30">
+          <nav aria-label="Main navigation" className="space-y-1 border-b border-border p-3">
+            <button aria-current="page" className="flex w-full items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-left text-sm font-semibold text-primary"><Rss size={15} />All Feeds</button>
+            <button onClick={() => router.push("/briefing")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Sparkles size={15} />Daily Briefing</button>
+            <button onClick={() => router.push("/settings")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><SettingsIcon size={15} />AI Settings</button>
+          </nav>
           <div className="p-3 space-y-1">
             <h2 className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1">
               Danh mục
@@ -605,7 +696,8 @@ export default function ReaderPage() {
           </div>
 
           {/* Article list */}
-          <div className="flex-1 overflow-y-auto bg-background">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="min-w-0 flex-1 overflow-y-auto bg-background lg:flex-none lg:w-[min(38vw,440px)] lg:border-r lg:border-border">
             {loading && articles.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-16">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
@@ -656,7 +748,8 @@ export default function ReaderPage() {
                       isSelected={selectedArticle?.id === article.id}
                       onSelect={(a) => {
                         setSelectedArticle(a);
-                        setSheetOpen(true);
+                        setSummaryError(null);
+                        setSheetOpen(window.innerWidth < 1024);
                       }}
                       onBookmark={toggleBookmark}
                     />
@@ -665,14 +758,17 @@ export default function ReaderPage() {
               </ScrollArea>
             )}
           </div>
+          <aside aria-label="Article reader" className="hidden min-w-0 flex-1 overflow-y-auto bg-background lg:block">
+            <ArticleReaderPanel article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
+          </aside>
+          </div>
           <p className="sr-only">Keyboard shortcuts: J and K move between articles, slash focuses search, B toggles the selected bookmark, and Escape closes the article panel.</p>
         </main>
       </div>
 
       {/* Reading panel (sheet) */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetTrigger render={() => <button /> } />
-        <SheetContent className="p-0 h-full w-full md:w-[560px]">
+        <SheetContent className="p-0 h-full w-full md:w-[560px] lg:hidden">
           <div className="flex h-full flex-col border-l border-border bg-background">
             <div className="flex-shrink-0 border-b border-border px-5 py-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -722,81 +818,8 @@ export default function ReaderPage() {
                 )}
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-5">
-              {selectedArticle ? (
-                <article className="space-y-5">
-                  <h1 className="text-xl font-bold text-foreground leading-snug md:text-2xl">
-                    {selectedArticle.title}
-                  </h1>
-                  <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
-                    <Badge variant="outline">
-                      {selectedArticle.source?.category || "Khác"}
-                    </Badge>
-                    {selectedArticle.publishedAt && (
-                      <>
-                        <span>·</span>
-                        <span>{formatRelative(selectedArticle.publishedAt)}</span>
-                      </>
-                    )}
-                    {selectedArticle.firstSeenAt && (
-                      <>
-                        <span>·</span>
-                        <span>Lưu lần đầu: {formatRelative(selectedArticle.firstSeenAt)}</span>
-                      </>
-                    )}
-                    {selectedArticle.relevanceScore != null && (
-                      <>
-                        <span>·</span>
-                        <span className="text-primary/70 font-medium">
-                          Điểm liên quan: {selectedArticle.relevanceScore}/10
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  {selectedArticle.relevanceExplanation && (
-                    <div className="rounded-lg border border-muted/50 bg-muted/30 p-3 text-sm text-muted-foreground">
-                      <span className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground/70">
-                        Tại sao quan trọng
-                      </span>
-                      <p className="mt-1">{selectedArticle.relevanceExplanation}</p>
-                    </div>
-                  )}
-                  {selectedArticle.summary || selectedArticle.excerpt && (
-                    <div className="text-sm text-muted-foreground leading-relaxed">
-                      <p className="mb-3">
-                        {selectedArticle.summary || selectedArticle.excerpt}
-                      </p>
-                      {selectedArticle.aiSummary && (
-                        <>
-                          <Separator />
-                          <p className="mb-2">
-                            <span className="font-semibold text-xs text-muted-foreground/70">
-                              Tóm tắt AI
-                            </span>
-                          </p>
-                          <p className="text-sm text-foreground leading-relaxed">
-                            {selectedArticle.aiSummary}
-                          </p>
-                          <p className="mt-1 text-[11px] text-muted-foreground/60">
-                            Tóm tắt được tạo bởi AI — kiểm tra bài gốc để xác nhận sự thật.
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  <div className="pt-3 border-t border-border text-xs text-muted-foreground">
-                    Nguồn:{" "}
-                    <a
-                      href={selectedArticle.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary underline hover:text-primary/80"
-                    >
-                      {selectedArticle.source?.title || selectedArticle.url}
-                    </a>
-                  </div>
-                </article>
-              ) : null}
+            <div className="flex-1 overflow-y-auto">
+              <ArticleReaderPanel article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
             </div>
           </div>
         </SheetContent>

@@ -20,6 +20,10 @@ import {
   RefreshCw,
   Settings as SettingsIcon,
   SlidersHorizontal,
+  Sparkles,
+  Cpu,
+  Bot,
+  Laptop,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { allocateSourceArticleLimits } from "@/lib/sourceLimits";
+import { AI_MODELS } from "@/lib/preferences";
 
 type Source = {
   id: string;
@@ -58,6 +63,8 @@ type Preferences = {
   language: string;
   retentionDays: number;
   maxArticlesPerRun: number;
+  aiProvider: "gemini" | "groq" | "mock";
+  aiModel: string;
 };
 
 function formatRelative(date: Date | null): string | null {
@@ -84,7 +91,10 @@ export default function SettingsPage() {
     language: "vi",
     retentionDays: 45,
     maxArticlesPerRun: 20,
+    aiProvider: "groq",
+    aiModel: "openai/gpt-oss-20b",
   });
+  const [availableProviders, setAvailableProviders] = useState({ gemini: false, groq: false, mock: true });
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
   const [refreshingPreferences, setRefreshingPreferences] = useState(false);
@@ -135,6 +145,7 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Failed to load preferences");
       const data = await res.json();
       setPreferences(data.data);
+      setAvailableProviders(data.availableProviders ?? { gemini: false, groq: false, mock: true });
       return data.data as Preferences;
     } catch {
       setError("Không tải được cài đặt. Hãy thử tải lại trang.");
@@ -304,6 +315,9 @@ export default function SettingsPage() {
                     <Database size={14} />
                     Lịch sử ingestion
                   </div>
+                </TabsTrigger>
+                <TabsTrigger value="ai" className="w-full text-left">
+                  <div className="flex items-center gap-2"><Sparkles size={14} />AI Provider</div>
                 </TabsTrigger>
                 <TabsTrigger value="preferences" className="w-full text-left">
                   <div className="flex items-center gap-2">
@@ -527,6 +541,44 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+            <TabsContent value="ai">
+              <Card className="mx-auto max-w-3xl">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm"><Cpu size={16} className="text-primary" />AI Provider</CardTitle>
+                  <p className="text-xs text-muted-foreground">Select the service and model for on-demand summaries, briefings, and scheduled ingestion.</p>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSavePreferences} className="space-y-5">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {([
+                        { value: "groq", label: "Groq", description: "Hosted · fast inference", Icon: Sparkles },
+                        { value: "gemini", label: "Gemini", description: "Google AI hosted models", Icon: Bot },
+                        { value: "mock", label: "Mock", description: "Local deterministic preview", Icon: Laptop },
+                      ] as const).map(({ value, label, description, Icon }) => (
+                        <button key={value} type="button" onClick={() => setPreferences((current) => ({ ...current, aiProvider: value, aiModel: AI_MODELS[value][0] }))} aria-pressed={preferences.aiProvider === value} className={`rounded-xl border p-4 text-left transition-colors ${preferences.aiProvider === value ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}>
+                          <Icon size={18} className={preferences.aiProvider === value ? "text-primary" : "text-muted-foreground"} />
+                          <span className="mt-2 block text-sm font-semibold">{label}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                          <span className={`mt-3 inline-flex items-center gap-1 text-[11px] ${availableProviders[value] ? "text-emerald-500" : "text-amber-500"}`}>{availableProviders[value] ? "Available" : value === "mock" ? "Available" : "API key not detected"}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="ai-model" className="text-sm font-medium">Model</label>
+                      <select id="ai-model" value={preferences.aiModel} onChange={(event) => setPreferences((current) => ({ ...current, aiModel: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        {AI_MODELS[preferences.aiProvider].map((model) => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                      <p className="text-xs text-muted-foreground">Provider credentials stay on the server. If the selected provider has no configured key or is unavailable, the other configured provider is tried.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="submit" disabled={savingPreferences}>{savingPreferences && <Loader2 size={14} className="mr-2 animate-spin" />}Save AI settings</Button>
+                      {preferencesMessage && <p role="status" className="text-sm text-green-700 dark:text-green-400">{preferencesMessage}</p>}
+                    </div>
+                    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                  </form>
+                </CardContent>
+              </Card>
             </TabsContent>
             <TabsContent value="preferences">
               <Card className="mx-auto max-w-2xl">

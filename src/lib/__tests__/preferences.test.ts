@@ -12,6 +12,35 @@ describe("validatePreferencesInput", () => {
     });
   });
 
+  it("accepts a matching server-side AI provider and model selection", () => {
+    expect(validatePreferencesInput({
+      language: "en",
+      retentionDays: 45,
+      maxArticlesPerRun: 50,
+      aiProvider: "gemini",
+      aiModel: "gemini-2.5-flash",
+    })).toEqual({
+      ok: true,
+      value: {
+        language: "en",
+        retentionDays: 45,
+        maxArticlesPerRun: 50,
+        aiProvider: "gemini",
+        aiModel: "gemini-2.5-flash",
+      },
+    });
+  });
+
+  it("rejects models that do not match the selected provider", () => {
+    expect(validatePreferencesInput({
+      language: "en",
+      retentionDays: 45,
+      maxArticlesPerRun: 50,
+      aiProvider: "groq",
+      aiModel: "gemini-2.5-flash",
+    }).ok).toBe(false);
+  });
+
   it.each([
     { language: "", retentionDays: 45, maxArticlesPerRun: 50 },
     { language: "vi", retentionDays: 29, maxArticlesPerRun: 50 },

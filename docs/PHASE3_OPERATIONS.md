@@ -22,6 +22,12 @@ Optional repository **Actions variables**:
 - `MAX_AI_CALLS_PER_RUN` (`20`) caps batch calls; `FEED_FETCH_CONCURRENCY`
   (`4`) and `AI_BATCH_CONCURRENCY` (`2`) bound parallel work.
 
+The saved **Settings → AI Provider** choice is used for on-demand summaries,
+briefings, and scheduled ingestion. `GEMINI_API_KEY` and `GROQ_API_KEY` remain
+server-side secrets; if the selected service is not configured, the other
+configured service is used. Daily briefings are generated on demand from at
+most 50 articles and are not persisted as briefing history in this phase.
+
 The schedule is UTC and may run late under GitHub Actions load. Manual dispatch uses the same secrets and worker limits.
 
 The worker closes `running` ingestion records older than 30 minutes as failed

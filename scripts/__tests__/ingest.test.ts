@@ -143,7 +143,7 @@ describe("retryExistingArticles", () => {
     const result = await retryExistingArticles("en", 10);
 
     expect(result).toEqual({ attempted: 1, completed: 1, failed: 0 });
-    expect(mockSummarize).toHaveBeenCalledWith("Saved article", "Original excerpt", "en");
+    expect(mockSummarize).toHaveBeenCalledWith("Saved article", "Original excerpt", "en", undefined);
     expect(mockPrisma.article.create).not.toHaveBeenCalled();
     expect(mockPrisma.article.updateMany).toHaveBeenCalledWith({
       where: { id: "art_failed", processingStatus: { in: ["pending", "failed"] } },

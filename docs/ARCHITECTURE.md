@@ -32,6 +32,9 @@ flowchart TD
 ## Data Flow
 1. **User visits the Vercel‑hosted UI** → UI fetches articles via API routes (`/api/articles`).
 2. **API routes** use Prisma (with RLS if auth enabled) to read/write Supabase tables.
+   - On-demand article summaries and Daily Briefing generation use the same
+     server-side Gemini/Groq provider wrapper and the saved provider/model
+     preference; API keys are never returned to the browser.
 3. **GitHub Actions** runs the ingestion script on schedule:
    - Fetches RSS/Atom feeds through the SSRF-hardened fetcher and parses feed
      metadata and excerpts; it does not fetch full article pages.
@@ -51,7 +54,7 @@ flowchart TD
 ## Component Boundaries
 | Component | Responsibility | Deployment | Key Tech |
 |-----------|----------------|------------|----------|
-| Frontend UI | Rendering feed list, article pane, bookmark UI | Vercel (static + serverless) | Next.js 16, React 19, Tailwind, shadcn/ui |
+| Frontend UI | Three-panel feed reader, on-demand summaries, briefing filters, settings | Vercel (static + serverless) | Next.js 16, React 19, Tailwind, shadcn/ui |
 | API Handlers | CRUD for articles, sources, settings | Vercel serverless functions | Next.js API routes, Prisma |
 | Database | Persistent storage | Supabase (managed PostgreSQL) | Prisma schema; currently single-user without RLS policies |
 | Ingestion Worker | Scheduled RSS fetch, deduplication, AI summarisation | GitHub Actions (node runtime) | Node/TS, rss-parser, AI wrapper |

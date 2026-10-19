@@ -44,6 +44,8 @@ migrations before using new database fields.
 
 In the reader, press `J`/`K` to move between articles, `/` to focus search, `B` to toggle the selected bookmark, and `Escape` to close the article panel.
 
+The desktop reader uses three panels for feed navigation, article selection, and reading. AI summaries are generated only when requested. The Daily Briefing page summarizes up to 50 articles from a selectable time range, with Critical, Medium, and Low relevance filters. Briefings are generated on demand and are not archived yet. Choose the default provider/model under **Settings → AI Provider**; API keys remain server-side, and scheduled ingestion uses the saved selection.
+
 GitHub Actions operations, required repository secrets, the UTC schedule, and cleanup modes are documented in [Phase 3 operations](docs/PHASE3_OPERATIONS.md). Vercel deployment, reader settings, and operational checks are documented in [Phase 4 deployment](docs/PHASE4_DEPLOYMENT.md).
 
 ## Attribution and license

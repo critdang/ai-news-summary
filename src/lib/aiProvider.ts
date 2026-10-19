@@ -41,6 +41,10 @@ export type BatchArticleInput = {
 
 export type BatchArticleResult = AIResult & { canonicalUrl: string };
 export type ProviderUsage = { inputTokens?: number; outputTokens?: number };
+export type AIProviderSelection = {
+  provider?: "gemini" | "groq" | "mock";
+  model?: string;
+};
 
 const BatchResultSchema = z.object({
   results: z.array(z.object({ canonicalUrl: z.string().min(1), ...SummarySchema.shape })),
@@ -249,9 +253,9 @@ class GeminiProvider implements AIProvider {
   private timeoutMs: number;
   private maxRetries: number;
 
-  constructor() {
+  constructor(modelOverride?: string) {
     this.apiKey = process.env.GEMINI_API_KEY || "";
-    this.model = process.env.AI_MODEL || "gemini-3.8-flash";
+    this.model = modelOverride || process.env.AI_MODEL || "gemini-3.8-flash";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
   }
@@ -361,9 +365,9 @@ class GroqProvider implements AIProvider {
   private timeoutMs: number;
   private maxRetries: number;
 
-  constructor() {
+  constructor(modelOverride?: string) {
     this.apiKey = process.env.GROQ_API_KEY || "";
-    this.model = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+    this.model = modelOverride || process.env.GROQ_MODEL || "openai/gpt-oss-20b";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
   }
@@ -546,19 +550,25 @@ class MockProvider implements AIProvider {
   }
 }
 
-function createProviders(): AIProvider[] {
-  if (process.env.AI_PROVIDER?.toLowerCase() === "mock") {
+function createProviders(selection?: AIProviderSelection): AIProvider[] {
+  const preferred = selection?.provider || process.env.AI_PROVIDER?.toLowerCase();
+  if (preferred === "mock") {
     return [new MockProvider()];
   }
 
   const providers: AIProvider[] = [];
-  if (process.env.GEMINI_API_KEY) providers.push(new GeminiProvider());
-  if (process.env.GROQ_API_KEY) providers.push(new GroqProvider());
+  if (process.env.GEMINI_API_KEY) {
+    providers.push(new GeminiProvider(preferred === "gemini" ? selection?.model : undefined));
+  }
+  if (process.env.GROQ_API_KEY) {
+    providers.push(new GroqProvider(preferred === "groq" ? selection?.model : undefined));
+  }
   return providers;
 }
 
 let providerCache: AIProvider[] | null = null;
-function getProviders(): AIProvider[] {
+function getProviders(selection?: AIProviderSelection): AIProvider[] {
+  if (selection) return createProviders(selection);
   if (!providerCache) providerCache = createProviders();
   return providerCache;
 }
@@ -575,14 +585,15 @@ export function resetProviderCacheForTests(): void {
 export async function summarizeArticle(
   title: string,
   excerpt: string | null,
-  language: string
+  language: string,
+  selection?: AIProviderSelection
 ): Promise<{ result: AIResult; provider: string } | null> {
-  const providers = getProviders();
+  const providers = getProviders(selection);
   if (providers.length === 0) {
     throw new Error("No AI provider configured (set GEMINI_API_KEY or GROQ_API_KEY)");
   }
 
-  const preferred = process.env.AI_PROVIDER?.toLowerCase() || "groq";
+  const preferred = selection?.provider || process.env.AI_PROVIDER?.toLowerCase() || "groq";
   const ordered = [...providers].sort(
     (a, b) => (a.name === preferred ? -1 : b.name === preferred ? 1 : 0)
   );
@@ -604,19 +615,20 @@ export async function summarizeArticle(
 
 export async function summarizeBatch(
   articles: BatchArticleInput[],
-  language: string
+  language: string,
+  selection?: AIProviderSelection
 ): Promise<{
   results: BatchArticleResult[];
   provider: string;
   model: string;
   usage: ProviderUsage;
 } | null> {
-  const providers = getProviders();
+  const providers = getProviders(selection);
   if (providers.length === 0) {
     throw new Error("No AI provider configured (set GEMINI_API_KEY or GROQ_API_KEY)");
   }
 
-  const preferred = process.env.AI_PROVIDER?.toLowerCase() || "groq";
+  const preferred = selection?.provider || process.env.AI_PROVIDER?.toLowerCase() || "groq";
   const ordered = [...providers].sort(
     (a, b) => (a.name === preferred ? -1 : b.name === preferred ? 1 : 0)
   );

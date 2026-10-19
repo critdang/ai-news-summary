@@ -2,7 +2,20 @@ export type PreferencesInput = {
   language: string;
   retentionDays: number;
   maxArticlesPerRun: number;
+  aiProvider?: "gemini" | "groq" | "mock";
+  aiModel?: string;
 };
+
+export const AI_MODELS = {
+  gemini: ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"],
+  groq: ["openai/gpt-oss-20b", "llama-3.3-70b-versatile"],
+  mock: ["mock"],
+} as const;
+
+export function resolveAIModel(provider: "gemini" | "groq" | "mock", preferred?: string): string {
+  const models = AI_MODELS[provider] as readonly string[];
+  return preferred && models.includes(preferred) ? preferred : models[0];
+}
 
 export type PreferencesValidation =
   | { ok: true; value: PreferencesInput }
@@ -27,12 +40,34 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     return { ok: false, error: "The total article limit must be a whole number from 1 to 50" };
   }
 
+  let aiProvider: PreferencesInput["aiProvider"];
+  if (input.aiProvider !== undefined) {
+    if (input.aiProvider !== "gemini" && input.aiProvider !== "groq" && input.aiProvider !== "mock") {
+      return { ok: false, error: "AI provider must be Gemini, Groq, or Mock" };
+    }
+    aiProvider = input.aiProvider;
+  }
+
+  let aiModel: string | undefined;
+  if (input.aiModel !== undefined) {
+    if (typeof input.aiModel !== "string" || input.aiModel.length > 100) {
+      return { ok: false, error: "AI model is invalid" };
+    }
+    aiModel = input.aiModel.trim();
+    const modelProvider = aiProvider || (input.aiModel === "mock" ? "mock" : undefined);
+    if (!modelProvider || !(AI_MODELS[modelProvider] as readonly string[]).includes(aiModel)) {
+      return { ok: false, error: "Choose a supported model for the selected provider" };
+    }
+  }
+
   return {
     ok: true,
     value: {
       language,
       retentionDays: Number(input.retentionDays),
       maxArticlesPerRun: Number(input.maxArticlesPerRun),
+      ...(aiProvider ? { aiProvider } : {}),
+      ...(aiModel ? { aiModel } : {}),
     },
   };
 }

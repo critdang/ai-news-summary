@@ -249,3 +249,19 @@ describe("summarizeBatch — keyed structured output", () => {
     expect(result?.results[0].summary).toBe("Fallback");
   });
 });
+
+describe("provider selection", () => {
+  it("uses the saved provider and validated model override", async () => {
+    process.env.AI_PROVIDER = "groq";
+    mockFetch({
+      ok: true,
+      status: 200,
+      json: {
+        candidates: [{ content: { parts: [{ text: '{"summary":"Summary","relevanceScore":6,"relevanceExplanation":"Relevant","tags":[]}' }] } }],
+      },
+    });
+    const out = await summarizeArticle("Title", "Text", "en", { provider: "gemini", model: "gemini-2.5-flash" });
+    expect(out?.provider).toBe("gemini");
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][0]).toContain("/models/gemini-2.5-flash:");
+  });
+});

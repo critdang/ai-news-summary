@@ -25,12 +25,14 @@ import { parseFeed } from "../src/lib/rss/parser.ts";
 import {
   summarizeArticle,
   summarizeBatch,
+  type AIProviderSelection,
   type BatchArticleInput,
 } from "../src/lib/aiProvider.ts";
 import { canonicalizeUrl } from "../src/lib/urlUtils.ts";
 import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
 import { allocateSourceArticleLimits } from "../src/lib/sourceLimits.ts";
 import { mapWithConcurrency, prepareArticleBatches } from "../src/lib/batchProcessing.ts";
+import { resolveAIModel } from "../src/lib/preferences.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -105,7 +107,9 @@ async function ensureSourcePreference(): Promise<void> {
         language: DEFAULT_LANGUAGE,
         retentionDays: 45,
         aiProvider: process.env.AI_PROVIDER || "groq",
-        aiModel: process.env.AI_MODEL || "gemini-3.8-flash",
+        aiModel: process.env.AI_PROVIDER === "gemini"
+          ? process.env.AI_MODEL || "gemini-3.8-flash"
+          : process.env.GROQ_MODEL || "openai/gpt-oss-20b",
         maxArticlesPerSource: MAX_ARTICLES_PER_RUN,
       },
     });
@@ -213,7 +217,8 @@ export async function fetchSourceCandidates(
 
 export async function retryExistingArticles(
   language: string,
-  limit = MAX_ARTICLE_RETRIES_PER_RUN
+  limit = MAX_ARTICLE_RETRIES_PER_RUN,
+  providerSelection?: AIProviderSelection
 ): Promise<{ attempted: number; completed: number; failed: number }> {
   if (limit <= 0) return { attempted: 0, completed: 0, failed: 0 };
 
@@ -231,7 +236,8 @@ export async function retryExistingArticles(
       const outcome = await summarizeArticle(
         article.title,
         article.excerpt || article.summary || null,
-        language
+        language,
+        providerSelection
       );
       if (!outcome) {
         failed++;
@@ -321,11 +327,17 @@ export async function runIngestion(): Promise<void> {
   await ensureSourcePreference();
 
   const preferences = await prisma.userPreference.findFirst({
-    select: { language: true, maxArticlesPerSource: true },
+    select: { language: true, maxArticlesPerSource: true, aiProvider: true, aiModel: true },
   });
   const savedArticleLimit = preferences?.maxArticlesPerSource;
+  const preferredProvider = preferences?.aiProvider || process.env.AI_PROVIDER || "groq";
+  const supportedProvider = preferredProvider === "gemini" || preferredProvider === "mock" ? preferredProvider : "groq";
   const ingestionOptions = {
     language: preferences?.language || DEFAULT_LANGUAGE,
+    providerSelection: {
+      provider: supportedProvider as AIProviderSelection["provider"],
+      model: resolveAIModel(supportedProvider, preferences?.aiModel),
+    },
     totalArticleBudget:
       typeof savedArticleLimit === "number" && savedArticleLimit > 0
         ? savedArticleLimit
@@ -344,7 +356,11 @@ export async function runIngestion(): Promise<void> {
     },
   });
 
-  const retried = await retryExistingArticles(ingestionOptions.language).catch((err) => {
+  const retried = await retryExistingArticles(
+    ingestionOptions.language,
+    MAX_ARTICLE_RETRIES_PER_RUN,
+    ingestionOptions.providerSelection
+  ).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ingest] Existing article retry query failed: ${message}`);
     return { attempted: 0, completed: 0, failed: 1 };
@@ -459,7 +475,7 @@ export async function runIngestion(): Promise<void> {
   if (prepared.batches.length > batchesToRun.length) hadError = true;
   const batchOutcomes = await mapWithConcurrency(batchesToRun, AI_BATCH_CONCURRENCY, async (batch) => {
     batchCalls++;
-    const result = await summarizeBatch(batch, ingestionOptions.language);
+    const result = await summarizeBatch(batch, ingestionOptions.language, ingestionOptions.providerSelection);
     return { batch, result };
   });
   let successfulSummaries = 0;
