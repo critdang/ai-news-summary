@@ -193,6 +193,8 @@ export default function ReaderPage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [bookmarkFilter, setBookmarkFilter] = useState("all"); // all | bookmarked | unbookmarked
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sort, setSort] = useState("publishedAt:desc");
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const router = useRouter();
@@ -226,6 +228,10 @@ export default function ReaderPage() {
         if (categoryFilter) params.set("category", categoryFilter);
         if (bookmarkFilter === "bookmarked") params.set("bookmarked", "1");
         else if (bookmarkFilter === "unbookmarked") params.set("bookmarked", "0");
+        if (statusFilter) params.set("status", statusFilter);
+        const [sortField, sortOrder] = sort.split(":");
+        params.set("sort", sortField);
+        params.set("order", sortOrder);
 
         const res = await fetch(`/api/articles?${params}`);
         if (!res.ok) throw new Error("Failed to load articles");
@@ -241,7 +247,7 @@ export default function ReaderPage() {
         if (requestIdRef.current === reqId) setLoading(false);
       }
     },
-    [search, categoryFilter, bookmarkFilter]
+    [search, categoryFilter, bookmarkFilter, statusFilter, sort]
   );
 
   const fetchSources = useCallback(async () => {
@@ -265,7 +271,22 @@ export default function ReaderPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchArticles(1);
-  }, [search, categoryFilter, bookmarkFilter, fetchArticles]);
+  }, [search, categoryFilter, bookmarkFilter, statusFilter, sort, fetchArticles]);
+
+  const handleCategoryChange = useCallback((value: string) => {
+    setCategoryFilter(value);
+    setPage(1);
+  }, []);
+
+  const handleStatusChange = useCallback((value: string) => {
+    setStatusFilter(value);
+    setPage(1);
+  }, []);
+
+  const handleSortChange = useCallback((value: string) => {
+    setSort(value);
+    setPage(1);
+  }, []);
 
   const toggleBookmark = useCallback(async (id: string) => {
     const rollback = (bookmarked: boolean) => {
@@ -360,7 +381,8 @@ export default function ReaderPage() {
             </h2>
             <div className="space-y-0.5">
               <button
-                onClick={() => setCategoryFilter("")}
+                onClick={() => handleCategoryChange("")}
+                aria-pressed={!categoryFilter}
                 className={cn(
                   "w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors",
                   !categoryFilter ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
@@ -371,7 +393,8 @@ export default function ReaderPage() {
               {categories.map((c) => (
                 <button
                   key={c.value}
-                  onClick={() => setCategoryFilter(c.value)}
+                  onClick={() => handleCategoryChange(c.value)}
+                  aria-pressed={categoryFilter === c.value}
                   className={cn(
                     "w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors",
                     categoryFilter === c.value
@@ -393,7 +416,7 @@ export default function ReaderPage() {
                 {sources.map((s) => (
                   <button
                     key={s.id}
-                    onClick={() => setCategoryFilter(s.category)}
+                    onClick={() => handleCategoryChange(s.category)}
                     className={cn(
                       "w-full text-left rounded-lg px-2.5 py-1 text-sm transition-colors hover:bg-muted",
                       categoryFilter === s.category
@@ -427,6 +450,7 @@ export default function ReaderPage() {
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
               />
               <Input
+                aria-label="Search articles"
                 type="text"
                 value={search}
                 onChange={(e) => handleSearchChange(e.target.value)}
@@ -444,11 +468,22 @@ export default function ReaderPage() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              <label className="sr-only" htmlFor="mobile-category-filter">Filter by category</label>
+              <select
+                id="mobile-category-filter"
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(e) => handleCategoryChange(e.target.value)}
+                className="h-8 max-w-[160px] rounded-md border border-input bg-background px-2 text-xs md:hidden"
+              >
+                <option value="">All categories</option>
+                {categories.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
+              </select>
               <Tabs defaultValue="all" className="text-[12px]">
                 <TabsList className="gap-1">
                   <TabsTrigger
                     value="all"
-                    onClick={() => setBookmarkFilter("all")}
+                    onClick={() => { setBookmarkFilter("all"); setPage(1); }}
                     className={cn(
                       "px-2 py-1 rounded-md transition-colors",
                       bookmarkFilter === "all"
@@ -460,7 +495,7 @@ export default function ReaderPage() {
                   </TabsTrigger>
                   <TabsTrigger
                     value="bookmarked"
-                    onClick={() => setBookmarkFilter("bookmarked")}
+                    onClick={() => { setBookmarkFilter("bookmarked"); setPage(1); }}
                     className={cn(
                       "px-2 py-1 rounded-md transition-colors",
                       bookmarkFilter === "bookmarked"
@@ -472,7 +507,7 @@ export default function ReaderPage() {
                   </TabsTrigger>
                   <TabsTrigger
                     value="unbookmarked"
-                    onClick={() => setBookmarkFilter("unbookmarked")}
+                    onClick={() => { setBookmarkFilter("unbookmarked"); setPage(1); }}
                     className={cn(
                       "px-2 py-1 rounded-md transition-colors",
                       bookmarkFilter === "unbookmarked"
@@ -484,8 +519,33 @@ export default function ReaderPage() {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
+              <label className="sr-only" htmlFor="status-filter">Filter by summary status</label>
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="">All statuses</option>
+                <option value="completed">Summarized</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Summary failed</option>
+              </select>
+              <label className="sr-only" htmlFor="sort-articles">Sort articles</label>
+              <select
+                id="sort-articles"
+                value={sort}
+                onChange={(e) => handleSortChange(e.target.value)}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="publishedAt:desc">Newest published</option>
+                <option value="publishedAt:asc">Oldest published</option>
+                <option value="createdAt:desc">Recently added</option>
+                <option value="relevanceScore:desc">Most relevant</option>
+                <option value="title:asc">Title A–Z</option>
+              </select>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="font-medium">{total}</span> bài viết
+                <span className="font-medium" aria-live="polite">{total}</span> bài viết
               </div>
               <div className="flex items-center justify-between border-l border-border pl-2">
                 <span className="text-[11px]">{page} / {totalPages}</span>

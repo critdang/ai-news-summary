@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Database,
   Settings as SettingsIcon,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,12 @@ type Run = {
   sourcesProcessed: number;
 };
 
+type Preferences = {
+  language: string;
+  retentionDays: number;
+  maxArticlesPerSource: number;
+};
+
 function formatRelative(date: Date | null): string | null {
   if (!date) return "—";
   const d = new Date(date);
@@ -68,7 +75,15 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("sources");
   const [sources, setSources] = useState<Source[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [lastSuccessfulUpdate, setLastSuccessfulUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<Preferences>({
+    language: "vi",
+    retentionDays: 45,
+    maxArticlesPerSource: 20,
+  });
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
   const router = useRouter();
 
   // Add source form
@@ -94,8 +109,20 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Failed to load runs");
       const data = await res.json();
       setRuns(data.data);
+      setLastSuccessfulUpdate(data.lastSuccessfulUpdate);
     } catch {
-      /* ignore */
+      setError("Không tải được lịch sử ingestion. Hãy thử tải lại trang.");
+    }
+  }, []);
+
+  const fetchPreferences = useCallback(async () => {
+    try {
+      const res = await fetch("/api/preferences");
+      if (!res.ok) throw new Error("Failed to load preferences");
+      const data = await res.json();
+      setPreferences(data.data);
+    } catch {
+      setError("Không tải được cài đặt. Hãy thử tải lại trang.");
     }
   }, []);
 
@@ -103,8 +130,30 @@ export default function SettingsPage() {
     // Data fetching on mount triggers state updates via the fetch helpers;
     // this is the standard React data-fetching pattern.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    Promise.all([fetchSources(), fetchRuns()]);
-  }, [fetchSources, fetchRuns]);
+    Promise.all([fetchSources(), fetchRuns(), fetchPreferences()]);
+  }, [fetchSources, fetchRuns, fetchPreferences]);
+
+  const handleSavePreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setPreferencesMessage(null);
+    setSavingPreferences(true);
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(preferences),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể lưu cài đặt");
+      setPreferences(data.data);
+      setPreferencesMessage("Đã lưu cài đặt. Worker sẽ dùng chúng ở lần chạy tiếp theo.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể lưu cài đặt");
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,11 +248,37 @@ export default function SettingsPage() {
                     Lịch sử ingestion
                   </div>
                 </TabsTrigger>
+                <TabsTrigger value="preferences" className="w-full text-left">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal size={14} />
+                    Tuỳ chọn
+                  </div>
+                </TabsTrigger>
               </TabsList>
             </nav>
           </aside>
 
           <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
+            <nav aria-label="Mục cài đặt" className="border-b border-border px-3 py-2 md:hidden">
+              <div role="tablist" aria-label="Mục cài đặt" className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+                {[
+                  ["sources", "Nguồn"],
+                  ["runs", "Lịch sử"],
+                  ["preferences", "Tuỳ chọn"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === value}
+                    onClick={() => setActiveTab(value)}
+                    className={`rounded-md px-2 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeTab === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </nav>
             <ScrollArea className="h-full p-4">
             <TabsContent value="sources">
               <div className="space-y-4">
@@ -215,18 +290,21 @@ export default function SettingsPage() {
                     <form onSubmit={handleAddSource} className="space-y-3">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <Input
+                          aria-label="URL nguồn RSS"
                           value={newUrl}
                           onChange={(e) => setNewUrl(e.target.value)}
                           placeholder="https://example.com/feed.xml"
                           className="h-9 text-sm"
                         />
                         <Input
+                          aria-label="Tên nguồn RSS (tuỳ chọn)"
                           value={newTitle}
                           onChange={(e) => setNewTitle(e.target.value)}
                           placeholder="Tên nguồn (tùy chọn)"
                           className="h-9 text-sm"
                         />
                         <Input
+                          aria-label="Danh mục nguồn RSS"
                           value={newCategory}
                           onChange={(e) => setNewCategory(e.target.value)}
                           placeholder="Danh mục (mặc định: Uncategorized)"
@@ -243,7 +321,7 @@ export default function SettingsPage() {
                       </Button>
                     </form>
                     {error && (
-                      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                      <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
                         {error}
                       </div>
                     )}
@@ -303,6 +381,7 @@ export default function SettingsPage() {
                                 onClick={() => handleDeleteSource()}
                                 className="h-7 px-1.5 p-0"
                                 title="Xóa nguồn"
+                                aria-label={`Xóa nguồn ${s.title}`}
                               >
                                 <Trash2 size={12} />
                               </Button>
@@ -319,7 +398,12 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between py-2">
-                    <CardTitle className="text-sm">Lịch sử ingestion</CardTitle>
+                    <div>
+                      <CardTitle className="text-sm">Lịch sử ingestion</CardTitle>
+                      <p className="mt-1 text-xs text-muted-foreground" aria-live="polite">
+                        Cập nhật thành công gần nhất: {formatRelative(lastSuccessfulUpdate ? new Date(lastSuccessfulUpdate) : null)}
+                      </p>
+                    </div>
                   </CardHeader>
                   <CardContent className="p-4">
                     <div className="border-t border-border divide-y divide-border">
@@ -360,6 +444,67 @@ export default function SettingsPage() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+            <TabsContent value="preferences">
+              <Card className="mx-auto max-w-2xl">
+                <CardHeader>
+                  <CardTitle className="text-sm">Tuỳ chọn đọc và ingestion</CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Các giá trị này được lưu trong Supabase và áp dụng cho những lần worker tiếp theo.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSavePreferences} className="space-y-5">
+                    <div className="space-y-2">
+                      <label htmlFor="summary-language" className="text-sm font-medium">Ngôn ngữ tóm tắt</label>
+                      <select
+                        id="summary-language"
+                        value={preferences.language}
+                        onChange={(e) => setPreferences((current) => ({ ...current, language: e.target.value }))}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="vi">Tiếng Việt</option>
+                        <option value="en">English</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="retention-days" className="text-sm font-medium">Thời gian lưu bài viết (30–60 ngày)</label>
+                      <Input
+                        id="retention-days"
+                        type="number"
+                        min={30}
+                        max={60}
+                        step={1}
+                        required
+                        value={preferences.retentionDays}
+                        onChange={(e) => setPreferences((current) => ({ ...current, retentionDays: Number(e.target.value) }))}
+                      />
+                      <p className="text-xs text-muted-foreground">Bài đã lưu và bài có ghi chú sẽ được giữ lại.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="article-limit" className="text-sm font-medium">Giới hạn bài viết mỗi nguồn (1–50)</label>
+                      <Input
+                        id="article-limit"
+                        type="number"
+                        min={1}
+                        max={50}
+                        step={1}
+                        required
+                        value={preferences.maxArticlesPerSource}
+                        onChange={(e) => setPreferences((current) => ({ ...current, maxArticlesPerSource: Number(e.target.value) }))}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <Button type="submit" disabled={savingPreferences}>
+                        {savingPreferences && <Loader2 size={14} className="mr-2 animate-spin" />}
+                        Lưu tuỳ chọn
+                      </Button>
+                      {preferencesMessage && <p role="status" className="text-sm text-green-700 dark:text-green-400">{preferencesMessage}</p>}
+                    </div>
+                    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                  </form>
+                </CardContent>
+              </Card>
             </TabsContent>
             </ScrollArea>
           </main>

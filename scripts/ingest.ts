@@ -99,7 +99,9 @@ export async function processSource(
     url: string;
     title: string;
     category: string;
-  }): Promise<SourceResult> {
+  },
+  options: { maxArticlesPerSource?: number; language?: string } = {}
+): Promise<SourceResult> {
   const result: SourceResult = {
     sourceId: source.id,
     sourceUrl: source.url,
@@ -127,7 +129,9 @@ export async function processSource(
 
   result.fetched = parsed.items.length;
 
-  const items = parsed.items.slice(0, MAX_ARTICLES_PER_SOURCE);
+  const maxArticlesPerSource = options.maxArticlesPerSource ?? MAX_ARTICLES_PER_SOURCE;
+  const language = options.language ?? DEFAULT_LANGUAGE;
+  const items = parsed.items.slice(0, maxArticlesPerSource);
 
   // Collect candidate canonical URLs to check for existing articles.
   const candidateUrls = items
@@ -167,7 +171,7 @@ export async function processSource(
     let aiResult: AIResult | null = null;
     result.aiCalls++;
     try {
-      const outcome = await summarizeArticle(title, excerpt, DEFAULT_LANGUAGE);
+      const outcome = await summarizeArticle(title, excerpt, language);
       aiResult = outcome?.result ?? null;
       if (!outcome) result.aiFailures++;
     } catch {
@@ -284,6 +288,18 @@ export async function runIngestion(): Promise<void> {
   await ensureDefaultCategories();
   await ensureSourcePreference();
 
+  const preferences = await prisma.userPreference.findFirst({
+    select: { language: true, maxArticlesPerSource: true },
+  });
+  const savedArticleLimit = preferences?.maxArticlesPerSource;
+  const ingestionOptions = {
+    language: preferences?.language || DEFAULT_LANGUAGE,
+    maxArticlesPerSource:
+      typeof savedArticleLimit === "number" && savedArticleLimit > 0
+        ? savedArticleLimit
+        : MAX_ARTICLES_PER_SOURCE,
+  };
+
   const run = await prisma.ingestionRun.create({
     data: {
       status: "running",
@@ -318,7 +334,10 @@ export async function runIngestion(): Promise<void> {
 
   // Process sources sequentially (one failing does not abort the others).
   for (const source of sources) {
-    const result = await processSource({ ...source, category: source.category.name }).catch((err) => {
+    const result = await processSource(
+      { ...source, category: source.category.name },
+      ingestionOptions
+    ).catch((err) => {
       hadError = true;
       const message = err instanceof Error ? err.message : String(err);
       return {
