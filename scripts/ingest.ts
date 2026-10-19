@@ -24,6 +24,7 @@ import { prisma } from "../src/lib/prisma.ts";
 import { parseFeed } from "../src/lib/rss/parser.ts";
 import { summarizeArticle, type AIResult } from "../src/lib/aiProvider.ts";
 import { canonicalizeUrl } from "../src/lib/urlUtils.ts";
+import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -74,6 +75,16 @@ async function ensureSourcePreference(): Promise<void> {
         aiModel: "gemini-1.5-flash",
         maxArticlesPerSource: MAX_ARTICLES_PER_SOURCE,
       },
+    });
+  }
+}
+
+export async function ensureDefaultCategories(): Promise<void> {
+  for (const [sortOrder, name] of DEFAULT_CATEGORIES.entries()) {
+    await prisma.category.upsert({
+      where: { slug: categorySlug(name) },
+      update: {},
+      create: { name, slug: categorySlug(name), sortOrder },
     });
   }
 }
@@ -270,6 +281,7 @@ async function updateFeedHealth(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function runIngestion(): Promise<void> {
+  await ensureDefaultCategories();
   await ensureSourcePreference();
 
   const run = await prisma.ingestionRun.create({
@@ -340,6 +352,7 @@ export async function runIngestion(): Promise<void> {
       : hadError
         ? "partial"
         : "completed";
+  const sourceFailures = sourceResults.filter((result) => result.error).length;
 
   await prisma.ingestionRun.update({
     where: { id: run.id },
@@ -348,7 +361,7 @@ export async function runIngestion(): Promise<void> {
       completedAt: new Date(),
       articleCount: totalFetched,
       newCount: totalNew,
-      errorCount: totalAIFailures,
+      errorCount: sourceFailures + totalAIFailures,
       errorMessage: hadError
         ? [
             ...sourceResults.flatMap((r) => (r.error ? [r.error] : [])),
