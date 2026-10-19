@@ -12,7 +12,6 @@ import {
   ensureDefaultCategories,
   markStaleIngestionRuns,
   fetchSourceCandidates,
-  retryExistingArticles,
 } from "../ingest";
 
 // Mock Prisma so no real database is touched.
@@ -56,12 +55,6 @@ jest.mock("@/lib/rss/parser", () => ({
   parseFeed: jest.fn(async () => mockParsedFeed),
 }));
 
-// Mock AI so no real calls are made.
-jest.mock("@/lib/aiProvider", () => ({
-  summarizeArticle: jest.fn(),
-}));
-
-import { summarizeArticle } from "@/lib/aiProvider";
 import { parseFeed } from "@/lib/rss/parser";
 import { canonicalizeUrl } from "@/lib/urlUtils";
 
@@ -80,20 +73,10 @@ const mockPrisma = prisma as unknown as {
   $disconnect: jest.Mock;
 };
 
-const mockSummarize = summarizeArticle as jest.Mock;
 const mockParseFeed = parseFeed as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockSummarize.mockResolvedValue({
-    result: {
-      summary: "Tóm tắt",
-      relevanceScore: 7,
-      relevanceExplanation: "Quan trọng",
-      tags: ["ai"],
-    },
-    provider: "gemini",
-  });
   mockParseFeed.mockResolvedValue(mockParsedFeed);
 
   // Default: no existing articles (all new).
@@ -129,35 +112,6 @@ describe("markStaleIngestionRuns", () => {
   });
 });
 
-describe("retryExistingArticles", () => {
-  it("retries stored failed articles without creating a duplicate or touching user fields", async () => {
-    mockPrisma.article.findMany.mockResolvedValue([
-      {
-        id: "art_failed",
-        title: "Saved article",
-        excerpt: "Original excerpt",
-        summary: null,
-      },
-    ]);
-
-    const result = await retryExistingArticles("en", 10);
-
-    expect(result).toEqual({ attempted: 1, completed: 1, failed: 0 });
-    expect(mockSummarize).toHaveBeenCalledWith("Saved article", "Original excerpt", "en", undefined);
-    expect(mockPrisma.article.create).not.toHaveBeenCalled();
-    expect(mockPrisma.article.updateMany).toHaveBeenCalledWith({
-      where: { id: "art_failed", processingStatus: { in: ["pending", "failed"] } },
-      data: {
-        aiSummary: "Tóm tắt",
-        relevanceScore: 7,
-        relevanceExplanation: "Quan trọng",
-        tags: ["ai"],
-        processingStatus: "completed",
-      },
-    });
-  });
-});
-
 describe("fetchSourceCandidates — normalization", () => {
   const source = { id: "src_1", url: "https://example.com/feed.xml", title: "Example", category: "AI" };
 
@@ -166,7 +120,17 @@ describe("fetchSourceCandidates — normalization", () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0].canonicalUrl).toBe(canonicalizeUrl("https://example.com/article"));
     expect(mockPrisma.article.create).not.toHaveBeenCalled();
-    expect(mockSummarize).not.toHaveBeenCalled();
+    expect(result.candidates[0].excerpt).toBe("An example excerpt.");
+  });
+
+  it("keeps full RSS content for the reader when it is available", async () => {
+    mockParseFeed.mockResolvedValue({
+      ...mockParsedFeed,
+      items: [{ ...mockParsedFeed.items[0], summary: "Short RSS summary", content: "Full RSS article content." }],
+    });
+    const result = await fetchSourceCandidates(source, 10);
+    expect(result.candidates[0].excerpt).toBe("Full RSS article content.");
+    expect(result.candidates[0].summary).toBe("Short RSS summary");
   });
 
   it("honors the source allocation when slicing parsed feed items", async () => {

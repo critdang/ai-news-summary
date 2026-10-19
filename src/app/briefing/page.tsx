@@ -20,6 +20,12 @@ type BriefingArticle = {
   tags: string[];
 };
 type Source = { category: string };
+type RefreshReport = {
+  sourcesChecked: number;
+  itemsFetched: number;
+  newArticles: number;
+  failedSources: string[];
+};
 
 const RANGES = [
   { hours: 12, label: "12h" },
@@ -34,7 +40,7 @@ const IMPACTS = [
   { value: "low", label: "Low", Icon: Zap, tone: "text-sky-400 border-sky-500/30 bg-sky-500/10" },
 ] as const;
 
-export default function BriefingPage() {
+export default function BriefingPage({ embedded = false }: { embedded?: boolean }) {
   const [articles, setArticles] = useState<BriefingArticle[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -44,6 +50,8 @@ export default function BriefingPage() {
   const [error, setError] = useState<string | null>(null);
   const [scanned, setScanned] = useState(0);
   const [truncated, setTruncated] = useState(false);
+  const [refresh, setRefresh] = useState<RefreshReport | null>(null);
+  const [providerInfo, setProviderInfo] = useState<{ provider: string | null; model: string | null } | null>(null);
 
   useEffect(() => {
     fetch("/api/sources")
@@ -63,6 +71,8 @@ export default function BriefingPage() {
   async function generateBriefing() {
     setLoading(true);
     setError(null);
+    setRefresh(null);
+    setProviderInfo(null);
     try {
       const response = await fetch("/api/briefing", {
         method: "POST",
@@ -70,10 +80,12 @@ export default function BriefingPage() {
         body: JSON.stringify({ hours, categories: selectedCategories }),
       });
       const body = await response.json();
+      if (body.refresh) setRefresh(body.refresh);
       if (!response.ok) throw new Error(body.error || "Briefing generation failed");
       setArticles(body.data || []);
       setScanned(body.scanned || 0);
       setTruncated(Boolean(body.truncated));
+      setProviderInfo({ provider: body.provider ?? null, model: body.model ?? null });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Briefing generation failed");
       setArticles([]);
@@ -92,8 +104,8 @@ export default function BriefingPage() {
   ]));
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
+    <div className={embedded ? "flex h-full min-h-0 flex-col overflow-hidden bg-background" : "flex h-screen flex-col overflow-hidden bg-background"}>
+      {!embedded && <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sparkles size={18} /></div>
           <div><h1 className="text-base font-bold">Daily Briefing</h1><p className="text-xs text-muted-foreground">Recent stories scored by relevance and urgency</p></div>
@@ -102,9 +114,9 @@ export default function BriefingPage() {
           <Link href="/" className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"><ArrowLeft size={14} className="mr-1.5" /><Rss size={14} className="mr-1.5" />All Feeds</Link>
           <Link href="/settings" className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"><Settings size={14} className="mr-1.5" />Settings</Link>
         </div>
-      </header>
+      </header>}
 
-      <main className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 p-5 md:p-8">
           <section className="rounded-2xl border border-border bg-card p-5 md:p-6">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold"><Sparkles size={16} className="text-primary" />Generate an AI-powered briefing</div>
@@ -116,7 +128,7 @@ export default function BriefingPage() {
             <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
               <Button onClick={() => void generateBriefing()} disabled={loading} className="flex-1">
                 {loading ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
-                {loading ? "Generating briefing…" : "Generate Briefing"}
+                {loading ? "Fetching feeds and generating…" : "Generate Briefing"}
               </Button>
               <span className="hidden text-xs text-muted-foreground sm:inline">Summarizes up to 50 recent articles</span>
             </div>
@@ -128,8 +140,13 @@ export default function BriefingPage() {
               <div className="flex flex-wrap gap-2">{IMPACTS.map(({ value, label, Icon, tone }) => <button key={value} onClick={() => toggleItem(value, selectedImpacts, setSelectedImpacts)} aria-pressed={selectedImpacts.includes(value)} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium", tone, !selectedImpacts.includes(value) && "opacity-45") }><Icon size={13} />{label}<span>{counts[value]}</span></button>)}</div>
             </div>}
             {truncated && <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-300"><AlertTriangle size={14} className="mr-2 inline" />Some articles exceeded the briefing batch limits and were left out.</p>}
+            {refresh && <div role="status" className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+              Checked {refresh.sourcesChecked} selected feed{refresh.sourcesChecked === 1 ? "" : "s"}; fetched {refresh.itemsFetched} RSS item{refresh.itemsFetched === 1 ? "" : "s"}; saved {refresh.newArticles} new article{refresh.newArticles === 1 ? "" : "s"}.
+              {refresh.failedSources.length > 0 && <span className="mt-1 block text-amber-600 dark:text-amber-300">Could not refresh: {refresh.failedSources.join(", " )}</span>}
+              {providerInfo?.provider && <span className="mt-1 block">Briefing generated with {providerInfo.provider}{providerInfo.model ? ` · ${providerInfo.model}` : ""}.</span>}
+            </div>}
             {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><AlertTriangle size={15} className="mr-2 inline" />{error}</div>}
-            {!loading && articles.length === 0 && !error && <div className="flex flex-col items-center rounded-2xl border border-dashed border-border py-16 text-center"><Newspaper size={32} className="mb-3 text-muted-foreground" /><h2 className="font-semibold">No briefing generated</h2><p className="mt-1 text-sm text-muted-foreground">Choose a time range and generate a briefing from your feeds.</p></div>}
+            {!loading && articles.length === 0 && !error && <div className="flex flex-col items-center rounded-2xl border border-dashed border-border py-16 text-center"><Newspaper size={32} className="mb-3 text-muted-foreground" /><h2 className="font-semibold">No briefing generated</h2><p className="mt-1 text-sm text-muted-foreground">Choose categories and a time range, then generate a briefing from their feeds.</p>{refresh && <p className="mt-2 max-w-xl text-xs text-muted-foreground">The selected feeds were checked. Only articles published within the selected range are included; try a wider range if those feeds returned no recent articles.</p>}</div>}
             {!loading && articles.length > 0 && visibleArticles.length === 0 && <p className="rounded-xl border border-border p-8 text-center text-sm text-muted-foreground">Turn on at least one impact filter to see matching stories.</p>}
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {visibleArticles.map((article) => {
@@ -148,7 +165,7 @@ export default function BriefingPage() {
             </div>
           </section>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

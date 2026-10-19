@@ -31,6 +31,15 @@ settings or browser.
    access boundary. Do not expose it publicly until authentication and database
    ownership policies are implemented.
 
+5. To let the reader's refresh button start an RSS fetch, add `GITHUB_TOKEN` and
+   `GITHUB_REPOSITORY` as Vercel server environment variables. Use a fine-grained
+   token restricted to this repository with Actions read/write access; set the
+   repository value to `owner/name`. The token is read only by the server route
+   and must not use a `NEXT_PUBLIC_` prefix. The button dispatches the existing
+   ingestion workflow on `main`, reports its status, then reloads articles after
+   a successful run. Keep Vercel Deployment Protection enabled because API
+   routes are single-user and do not enforce application authentication.
+
 ## Configure the scheduled worker
 
 In GitHub repository **Settings → Secrets and variables → Actions**, configure:
@@ -40,7 +49,6 @@ In GitHub repository **Settings → Secrets and variables → Actions**, configu
 - Variables: optionally `AI_PROVIDER` (defaults to `groq`), `AI_MODEL`
   (defaults to `gemini-3.8-flash`), `GROQ_MODEL` (defaults to
   `openai/gpt-oss-20b`), `DEFAULT_LANGUAGE`, `MAX_ARTICLES_PER_RUN`, and
-  `MAX_ARTICLE_RETRIES_PER_RUN`.
 
 The worker uses saved language and the total article budget on later runs.
 The cleanup worker uses the saved retention setting. Workflow cron times are UTC;

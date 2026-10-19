@@ -44,6 +44,8 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useKeyboardShortcuts } from "@/lib/hooks/useKeyboardShortcuts";
 import { nextArticleIndex } from "@/lib/readerNavigation";
+import { rssPlainText, sanitizeRssHtml } from "@/lib/rss/displayContent";
+import BriefingPage from "@/app/briefing/page";
 
 type Article = {
   id: string;
@@ -107,7 +109,8 @@ function ArticleReaderPanel({
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant="outline">{article.source?.category || "Other"}</Badge>
-        {article.publishedAt && <span className="inline-flex items-center gap-1"><Clock size={11} />{formatRelative(article.publishedAt)}</span>}
+        <span className="inline-flex items-center gap-1" title={`Published: ${formatDateTime(article.publishedAt)}`}><Clock size={11} />Published {formatDateTime(article.publishedAt)}</span>
+        <span className="inline-flex items-center gap-1" title={`Received: ${formatDateTime(article.firstSeenAt)}`}><Rss size={11} />Received {formatDateTime(article.firstSeenAt)}</span>
         {article.relevanceScore != null && <span>Relevance {article.relevanceScore}/10</span>}
       </div>
       <Button onClick={onSummarize} disabled={summaryLoading || Boolean(article.aiSummary)} className="w-full">
@@ -116,7 +119,7 @@ function ArticleReaderPanel({
       </Button>
       {summaryError && <p role="alert" className="text-xs text-destructive">{summaryError}</p>}
       {article.aiSummary && <section className="rounded-xl border border-primary/30 bg-primary/5 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles size={14} />AI Summary</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{article.aiSummary}</p>{article.relevanceExplanation && <p className="mt-3 border-t border-primary/10 pt-3 text-xs text-muted-foreground">{article.relevanceExplanation}</p>}</section>}
-      {(article.summary || article.excerpt) && <section><h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Newspaper size={13} />Article preview</h2><p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/85">{article.summary || article.excerpt}</p></section>}
+      {(article.summary || article.excerpt) && <section><h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Newspaper size={13} />RSS article content</h2><div className="rss-content text-sm leading-relaxed text-foreground/85 [&_img]:my-3 [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg [&_p]:my-3 [&_a]:text-primary [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeRssHtml(article.excerpt || article.summary) }} /></section>}
       <a href={article.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted"><ExternalLink size={13} />Read full article at {article.source?.title || "source"}</a>
     </article>
   );
@@ -134,6 +137,19 @@ function formatRelative(date: Date | null): string | null {
   if (diffHours < 24) return `${diffHours} giờ trước`;
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays} ngày trước`;
+}
+
+function formatDateTime(date: Date | null): string {
+  if (!date) return "date unavailable";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(date));
+}
+
+function formatDate(date: Date | null): string {
+  if (!date) return "date unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(date));
 }
 
 const ArticleItem = memo(function ArticleItem({
@@ -179,17 +195,15 @@ const ArticleItem = memo(function ArticleItem({
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
           {article.source?.category && (
             <Badge variant="outline" className="px-1.5 py-0.5">
               {article.source.category}
             </Badge>
           )}
-          {article.publishedAt && (
-            <span>
-              <Clock size={10} /> {formatRelative(article.publishedAt)}
-            </span>
-          )}
+          <span title={`Published ${formatDateTime(article.publishedAt)}`}>
+            <Clock size={10} /> Published {formatDateTime(article.publishedAt)}{article.publishedAt ? ` · ${formatRelative(article.publishedAt)}` : ""}
+          </span>
           {article.processingStatus === "failed" && (
             <span className="text-destructive">Lỗi AI</span>
           )}
@@ -197,15 +211,14 @@ const ArticleItem = memo(function ArticleItem({
         <h3 className="mt-1 text-sm font-semibold text-foreground leading-snug">
           {article.title}
         </h3>
-        {article.aiSummary || article.summary || article.excerpt && (
+        {(article.summary || article.excerpt) && (
           <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">
-            {article.aiSummary || article.summary || article.excerpt}
+            {rssPlainText(article.excerpt || article.summary)}
           </p>
         )}
         <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className="truncate max-w-[140px]">
-            {article.source?.title || "Nguồn không xác định"}
-          </span>
+          <span className="min-w-0 truncate max-w-[145px]">{article.source?.title || "Nguồn không xác định"}</span>
+          <span className="shrink-0" title={`Received ${formatDateTime(article.firstSeenAt)}`}>Received {formatDate(article.firstSeenAt)}</span>
           <div className="flex items-center gap-1.5">
             <button
               onClick={handleBookmark}
@@ -240,6 +253,7 @@ const ArticleItem = memo(function ArticleItem({
 ArticleItem.displayName = "ArticleItem";
 
 export default function ReaderPage() {
+  const [activeView, setActiveView] = useState<"feeds" | "briefing">("feeds");
   const [articles, setArticles] = useState<Article[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
@@ -431,9 +445,41 @@ export default function ReaderPage() {
     setPage(1);
   }, []);
 
-  const handleRefresh = useCallback(() => {
-    fetchArticles(page);
-  }, [fetchArticles, page]);
+  const [refreshingFeeds, setRefreshingFeeds] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const handleRefresh = useCallback(async () => {
+    if (refreshingFeeds) return;
+    setRefreshingFeeds(true);
+    setRefreshMessage("Starting RSS ingestion…");
+    try {
+      const response = await fetch("/api/ingestion/refresh", { method: "POST" });
+      const started = await response.json();
+      if (!response.ok) throw new Error(started.error || "Could not start RSS ingestion");
+      setRefreshMessage("RSS ingestion is running. Waiting for new articles…");
+      const deadline = Date.now() + 10 * 60 * 1000;
+      let complete = false;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        const statusResponse = await fetch(`/api/ingestion/refresh?since=${encodeURIComponent(started.requestedAt)}`);
+        const status = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(status.error || "Could not check ingestion status");
+        if (status.status === "completed") {
+          if (status.conclusion !== "success") throw new Error(`RSS ingestion ${status.conclusion || "failed"}. Check GitHub Actions for details.`);
+          complete = true;
+          break;
+        }
+        setRefreshMessage(status.status === "queued" ? "RSS ingestion is queued…" : "RSS ingestion is running…");
+      }
+      if (!complete) throw new Error("Ingestion is taking longer than expected. Check GitHub Actions; refresh the feed after it finishes.");
+      await Promise.all([fetchSources(), fetchArticles(page)]);
+      setRefreshMessage("Feeds updated with the latest RSS articles.");
+      window.setTimeout(() => setRefreshMessage(null), 8000);
+    } catch (cause) {
+      setRefreshMessage(cause instanceof Error ? cause.message : "Could not refresh RSS feeds");
+    } finally {
+      setRefreshingFeeds(false);
+    }
+  }, [fetchArticles, fetchSources, page, refreshingFeeds]);
 
   const canGoBack = page > 1;
   const canGoForward = page < totalPages;
@@ -441,27 +487,29 @@ export default function ReaderPage() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-6 py-3 flex items-center justify-between">
+      <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Rss size={16} />
           </div>
           <div>
             <h1 className="text-sm font-semibold text-foreground leading-none">AI News Summary</h1>
-            <p className="text-[11px] text-muted-foreground leading-none">
+            <p className="hidden sm:block text-[11px] text-muted-foreground leading-none">
               Software Engineering · AI/LLM · Data Science · 3D Printing · Maker
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={handleRefresh}
-            disabled={loading}
+            onClick={() => void handleRefresh()}
+            disabled={loading || refreshingFeeds}
+            aria-label="Fetch new articles from all RSS feeds"
+            title="Rebuild articles from saved RSS feeds. Existing articles are kept."
             className="h-7 px-2"
           >
-            {loading ? (
+            {refreshingFeeds ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={14} />
@@ -470,18 +518,20 @@ export default function ReaderPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => router.push("/briefing")}
+            onClick={() => setActiveView("briefing")}
+            aria-label="Daily Briefing"
             className="h-7 px-2"
           >
-            <Sparkles size={13} className="mr-1.5" />Daily Briefing
+            <Sparkles size={13} className="sm:mr-1.5" /><span className="hidden sm:inline">Daily Briefing</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => router.push("/settings")}
+            aria-label="AI Settings"
             className="h-7 px-2"
           >
-            <SettingsIcon size={13} className="mr-1.5" />AI Settings
+            <SettingsIcon size={13} className="sm:mr-1.5" /><span className="hidden sm:inline">AI Settings</span>
           </Button>
         </div>
       </header>
@@ -491,8 +541,8 @@ export default function ReaderPage() {
         {/* Sidebar: categories */}
         <aside className="hidden md:flex md:w-[240px] flex-col border-r border-border bg-muted/30">
           <nav aria-label="Main navigation" className="space-y-1 border-b border-border p-3">
-            <button aria-current="page" className="flex w-full items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-left text-sm font-semibold text-primary"><Rss size={15} />All Feeds</button>
-            <button onClick={() => router.push("/briefing")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Sparkles size={15} />Daily Briefing</button>
+            <button aria-current={activeView === "feeds" ? "page" : undefined} onClick={() => setActiveView("feeds")} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", activeView === "feeds" ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Rss size={15} />All Feeds</button>
+            <button aria-current={activeView === "briefing" ? "page" : undefined} onClick={() => setActiveView("briefing")} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", activeView === "briefing" ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Sparkles size={15} />Daily Briefing</button>
             <button onClick={() => router.push("/settings")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><SettingsIcon size={15} />AI Settings</button>
           </nav>
           <div className="p-3 space-y-1">
@@ -562,6 +612,8 @@ export default function ReaderPage() {
 
         {/* Main content */}
         <main className="flex flex-1 flex-col min-w-0">
+          {activeView === "briefing" ? <BriefingPage embedded /> : <>
+          {refreshMessage && <p role="status" className="border-b border-border bg-muted/40 px-5 py-2 text-xs text-muted-foreground">{refreshMessage}</p>}
           {/* Controls */}
           <div className="flex-shrink-0 border-b border-border bg-background px-5 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
             <div className="relative flex-1 min-w-0">
@@ -721,10 +773,12 @@ export default function ReaderPage() {
                   <Rss size={20} className="text-primary" />
                 </div>
                 <h3 className="text-base font-bold text-foreground">Không có bài viết</h3>
-                <p className="mt-1 text-sm text-muted-foreground text-center max-w-xs">
+                  <p className="mt-1 text-sm text-muted-foreground text-center max-w-xs">
                   {search || categoryFilter || bookmarkFilter !== "all"
                     ? "Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm."
-                    : "Chưa có bài viết nào. Hãy thêm nguồn RSS trong Cài đặt rồi chạy ingestion."}
+                    : sources.length === 0
+                      ? "Chưa có nguồn RSS. Hãy thêm nguồn trong Cài đặt rồi chạy ingestion."
+                      : "Đã có nguồn RSS nhưng chưa có bài viết đã lưu. Hãy chạy cập nhật RSS để tải bài từ các nguồn hiện có."}
                 </p>
                 {sources.length === 0 && (
                   <div className="mt-6">
@@ -735,6 +789,15 @@ export default function ReaderPage() {
                     >
                       Thêm nguồn RSS
                     </Button>
+                  </div>
+                )}
+                {sources.length > 0 && !search && !categoryFilter && bookmarkFilter === "all" && (
+                  <div className="mt-6">
+                    <Button size="sm" onClick={() => void handleRefresh()} disabled={refreshingFeeds}>
+                      {refreshingFeeds ? <Loader2 size={14} className="mr-2 animate-spin" /> : <RefreshCw size={14} className="mr-2" />}
+                      Rebuild articles from saved RSS feeds
+                    </Button>
+                    <p className="mt-2 max-w-sm text-center text-xs text-muted-foreground">Re-fetches your saved sources and restores available articles. Existing articles are kept; items no longer present in a source cannot be recovered.</p>
                   </div>
                 )}
               </div>
@@ -763,6 +826,7 @@ export default function ReaderPage() {
           </aside>
           </div>
           <p className="sr-only">Keyboard shortcuts: J and K move between articles, slash focuses search, B toggles the selected bookmark, and Escape closes the article panel.</p>
+          </>}
         </main>
       </div>
 

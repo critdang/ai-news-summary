@@ -45,7 +45,7 @@ The production build imports database-backed routes during page collection, so s
 
 ## Operations
 
-- The ingestion worker supports multiple saved sources, canonical URL deduplication, AI scoring/summaries, provider retry/fallback, and feed-health/run diagnostics.
+- The ingestion worker supports multiple saved sources, canonical URL deduplication, metadata-only storage, and feed-health/run diagnostics. AI summaries run on demand from the reader; Daily Briefing is also on demand.
 - Ingestion runs twice daily at 07:00 and 19:00 UTC and can be started with `workflow_dispatch`.
 - Cleanup runs daily at 08:30 UTC. Manual runs preview by default; scheduled cleanup applies the configured retention rule.
 - Retention is 45 days by default (allowed range: 30–60 days), and cleanup preserves bookmarked articles and all articles with notes.

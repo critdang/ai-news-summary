@@ -6,9 +6,10 @@ describe("validatePreferencesInput", () => {
       language: "vi",
       retentionDays: 45,
       maxArticlesPerRun: 50,
+      ingestionIntervalHours: 12,
     })).toEqual({
       ok: true,
-      value: { language: "vi", retentionDays: 45, maxArticlesPerRun: 50 },
+      value: { language: "vi", retentionDays: 45, maxArticlesPerRun: 50, ingestionIntervalHours: 12 },
     });
   });
 
@@ -17,6 +18,7 @@ describe("validatePreferencesInput", () => {
       language: "en",
       retentionDays: 45,
       maxArticlesPerRun: 50,
+      ingestionIntervalHours: 24,
       aiProvider: "gemini",
       aiModel: "gemini-2.5-flash",
     })).toEqual({
@@ -25,6 +27,7 @@ describe("validatePreferencesInput", () => {
         language: "en",
         retentionDays: 45,
         maxArticlesPerRun: 50,
+        ingestionIntervalHours: 24,
         aiProvider: "gemini",
         aiModel: "gemini-2.5-flash",
       },
@@ -42,12 +45,13 @@ describe("validatePreferencesInput", () => {
   });
 
   it.each([
-    { language: "", retentionDays: 45, maxArticlesPerRun: 50 },
-    { language: "vi", retentionDays: 29, maxArticlesPerRun: 50 },
-    { language: "vi", retentionDays: 61, maxArticlesPerRun: 50 },
-    { language: "vi", retentionDays: 45.5, maxArticlesPerRun: 50 },
-    { language: "vi", retentionDays: 45, maxArticlesPerRun: 0 },
-    { language: "vi", retentionDays: 45, maxArticlesPerRun: 51 },
+    { language: "", retentionDays: 45, maxArticlesPerRun: 50, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 29, maxArticlesPerRun: 50, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 61, maxArticlesPerRun: 50, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 45.5, maxArticlesPerRun: 50, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 45, maxArticlesPerRun: 0, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 45, maxArticlesPerRun: 51, ingestionIntervalHours: 12 },
+    { language: "vi", retentionDays: 45, maxArticlesPerRun: 50, ingestionIntervalHours: 6 },
   ])("rejects invalid preference values: %o", (value) => {
     expect(validatePreferencesInput(value).ok).toBe(false);
   });

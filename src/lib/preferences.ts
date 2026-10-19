@@ -2,6 +2,7 @@ export type PreferencesInput = {
   language: string;
   retentionDays: number;
   maxArticlesPerRun: number;
+  ingestionIntervalHours: 12 | 24;
   aiProvider?: "gemini" | "groq" | "mock";
   aiModel?: string;
 };
@@ -40,6 +41,10 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     return { ok: false, error: "The total article limit must be a whole number from 1 to 50" };
   }
 
+  if (input.ingestionIntervalHours !== 12 && input.ingestionIntervalHours !== 24) {
+    return { ok: false, error: "RSS schedule must be twice daily (12 hours) or daily (24 hours)" };
+  }
+
   let aiProvider: PreferencesInput["aiProvider"];
   if (input.aiProvider !== undefined) {
     if (input.aiProvider !== "gemini" && input.aiProvider !== "groq" && input.aiProvider !== "mock") {
@@ -66,6 +71,7 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
       language,
       retentionDays: Number(input.retentionDays),
       maxArticlesPerRun: Number(input.maxArticlesPerRun),
+      ingestionIntervalHours: input.ingestionIntervalHours,
       ...(aiProvider ? { aiProvider } : {}),
       ...(aiModel ? { aiModel } : {}),
     },

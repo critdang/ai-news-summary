@@ -180,13 +180,18 @@ function validateResult(raw: unknown): AIResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AIProviderHttpError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+
   constructor(
     message: string,
-    readonly status: number,
-    readonly retryAfterMs: number | null
+    status: number,
+    retryAfterMs: number | null
   ) {
     super(message);
     this.name = "AIProviderHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 

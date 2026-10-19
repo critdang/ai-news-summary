@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { resolveAIModel, validatePreferencesInput } from "@/lib/preferences";
+import { checkProviderAvailability } from "@/lib/providerAvailability";
 
 const defaultProvider = process.env.AI_PROVIDER === "gemini" ? "gemini" : process.env.AI_PROVIDER === "mock" ? "mock" : "groq";
 
@@ -8,29 +9,40 @@ const DEFAULT_PREFERENCES = {
   language: process.env.DEFAULT_LANGUAGE || "vi",
   retentionDays: 45,
   maxArticlesPerRun: Number(process.env.MAX_ARTICLES_PER_RUN || process.env.MAX_ARTICLES_PER_SOURCE) || 50,
+  ingestionIntervalHours: 12 as const,
   aiProvider: defaultProvider,
   aiModel: resolveAIModel(defaultProvider, defaultProvider === "gemini" ? process.env.AI_MODEL : process.env.GROQ_MODEL),
 };
 
 export async function GET(): Promise<NextResponse> {
   try {
-    const saved = await prisma.userPreference.findFirst({
-      select: { language: true, retentionDays: true, maxArticlesPerSource: true, aiProvider: true, aiModel: true },
-    });
+    const [saved, geminiStatus, groqStatus] = await Promise.all([
+      prisma.userPreference.findFirst({
+        select: { language: true, retentionDays: true, maxArticlesPerSource: true, ingestionIntervalHours: true, aiProvider: true, aiModel: true },
+      }),
+      checkProviderAvailability("gemini", process.env.GEMINI_API_KEY),
+      checkProviderAvailability("groq", process.env.GROQ_API_KEY),
+    ]);
     return NextResponse.json({
       data: saved
         ? {
             language: saved.language,
             retentionDays: saved.retentionDays,
             maxArticlesPerRun: saved.maxArticlesPerSource,
+            ingestionIntervalHours: saved.ingestionIntervalHours,
             aiProvider: saved.aiProvider,
             aiModel: saved.aiModel,
           }
         : DEFAULT_PREFERENCES,
       availableProviders: {
-        gemini: Boolean(process.env.GEMINI_API_KEY),
-        groq: Boolean(process.env.GROQ_API_KEY),
+        gemini: geminiStatus.state === "available",
+        groq: groqStatus.state === "available",
         mock: true,
+      },
+      providerStatus: {
+        gemini: geminiStatus,
+        groq: groqStatus,
+        mock: { state: "available", models: ["mock"] },
       },
     });
   } catch (error) {
@@ -83,6 +95,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         language: saved.language,
         retentionDays: saved.retentionDays,
         maxArticlesPerRun: saved.maxArticlesPerSource,
+        ingestionIntervalHours: saved.ingestionIntervalHours,
         aiProvider: saved.aiProvider,
         aiModel: saved.aiModel,
       },

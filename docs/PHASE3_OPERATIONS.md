@@ -2,39 +2,33 @@
 
 ## Scheduled ingestion
 
-`.github/workflows/ingest.yml` runs at 07:00 and 19:00 UTC and supports `workflow_dispatch` for manual runs. The worker fetches feeds with bounded concurrency, deduplicates canonical URLs across sources, and persists metadata with `pending` status before summarization. New summaries are grouped across feeds under item and serialized-character limits. Batch results are validated and only matching summaries are marked completed; failures remain stored for a later retry. The worker records feed health and continues after an individual source failure. Gemini and Groq retries/fallback are server-side and only configured keys are attempted.
+`.github/workflows/ingest.yml` checks at 07:00 and 19:00 UTC and supports `workflow_dispatch` for manual runs. Settings selects whether scheduled runs proceed twice daily or once a day; manual runs always proceed immediately. The worker fetches feeds with bounded concurrency, deduplicates canonical URLs across sources, and persists each article separately with `pending` status. It does not call AI. The reader’s individual **AI Summary** action sends the saved article to the server-side provider and stores the validated result in Supabase. Daily Briefing also makes an explicit on-demand AI request. The worker records feed health and continues after an individual source failure.
 
 Configure these repository **Actions secrets**:
 
 - `DATABASE_URL`: server-side Supabase PostgreSQL connection string for the worker.
-- `GEMINI_API_KEY` and/or `GROQ_API_KEY`: at least one provider key.
 
 Optional repository **Actions variables**:
 
-- `AI_PROVIDER` (`groq` by default; `gemini` or `mock` are also available),
-  `AI_MODEL` (`gemini-3.8-flash`), `GROQ_MODEL` (`openai/gpt-oss-20b`)
-- `DEFAULT_LANGUAGE` (`vi` by default)
+- `DEFAULT_LANGUAGE` (`vi` by default), used to initialize saved preferences.
 - `MAX_ARTICLES_PER_RUN` (`50` total new articles across all feeds by default;
   divided evenly unless feed-specific allocations are configured)
-- `MAX_ARTICLE_RETRIES_PER_RUN` (`25` by default)
-- `MAX_ARTICLES_PER_BATCH` (`15`), `MAX_BATCH_INPUT_CHARS` (`20000`), and
-  `MAX_ARTICLE_EXCERPT_CHARS` (`1200`) bound AI request size.
-- `MAX_AI_CALLS_PER_RUN` (`20`) caps batch calls; `FEED_FETCH_CONCURRENCY`
-  (`4`) and `AI_BATCH_CONCURRENCY` (`2`) bound parallel work.
+- `FEED_FETCH_CONCURRENCY` (`4`) bounds parallel feed requests.
 
-The saved **Settings → AI Provider** choice is used for on-demand summaries,
-briefings, and scheduled ingestion. `GEMINI_API_KEY` and `GROQ_API_KEY` remain
-server-side secrets; if the selected service is not configured, the other
-configured service is used. Daily briefings are generated on demand from at
-most 50 articles and are not persisted as briefing history in this phase.
+The saved **Settings → AI Provider** choice is used for on-demand summaries and
+briefings. Store `GEMINI_API_KEY` and `GROQ_API_KEY` as Vercel server environment
+variables, not Actions secrets. Settings checks provider authentication and
+lists the models available to that account. If the selected service is not
+configured or a request fails, another configured provider may be tried. Daily
+briefings are generated on demand from at most 50 articles and are not persisted
+as briefing history in this phase.
 
 The schedule is UTC and may run late under GitHub Actions load. Manual dispatch uses the same secrets and worker limits.
 
 The worker closes `running` ingestion records older than 30 minutes as failed
-before starting a new run. Summary retries update only AI fields and processing
-status; article URLs, bookmarks, and notes are left alone. Set
-`MAX_ARTICLE_RETRIES_PER_RUN=0` only if retries should be paused; the current
-worker enforces a minimum retry batch of one when the setting is non-positive.
+before starting a new run. Since ingestion no longer calls AI, provider
+credentials and AI rate limits cannot prevent RSS article metadata from being
+stored.
 
 ## Article retention
 

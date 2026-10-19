@@ -33,18 +33,17 @@ npx tsc --noEmit --incremental false
 npx next build --webpack
 ```
 
-`npm run ingest` runs one ingestion pass and retries a bounded number of saved failed summaries. Set `AI_PROVIDER=mock` to exercise summary processing without calling a hosted AI provider. `npm run cleanup` only previews eligible expired rows; use `npm run cleanup -- --apply` to delete eligible rows. Cleanup retains bookmarked articles and any article with a note. Review database migrations before applying them to a persistent database.
+`npm run ingest` fetches configured RSS sources, deduplicates items, and stores each article separately without making AI calls. Article summaries are generated and saved only when requested from the reader; Daily Briefing is also generated on demand. Settings lets you choose scheduled RSS collection twice daily or daily; GitHub Actions checks at 07:00 and 19:00 UTC, while manual refresh runs immediately. `npm run cleanup` only previews eligible expired rows; use `npm run cleanup -- --apply` to delete eligible rows. Cleanup retains bookmarked articles and any article with a note. Review database migrations before applying them to a persistent database.
 
 In Settings, the global new-article limit is the total budget across all feeds
-per run. The worker divides it evenly by default. Set a custom allocation under
+per RSS run. The worker divides it evenly by default. Set a custom allocation under
 **Sources** for preferred feeds; the remaining budget is divided among feeds on
-automatic allocation. The saved-settings refresh button only reloads
-preferences; it does not start ingestion or fetch RSS feeds. Apply pending Prisma
+automatic allocation. Apply pending Prisma
 migrations before using new database fields.
 
 In the reader, press `J`/`K` to move between articles, `/` to focus search, `B` to toggle the selected bookmark, and `Escape` to close the article panel.
 
-The desktop reader uses three panels for feed navigation, article selection, and reading. AI summaries are generated only when requested. The Daily Briefing page summarizes up to 50 articles from a selectable time range, with Critical, Medium, and Low relevance filters. Briefings are generated on demand and are not archived yet. Choose the default provider/model under **Settings → AI Provider**; API keys remain server-side, and scheduled ingestion uses the saved selection.
+The reader uses three panels for feed navigation, article selection, and reading. Daily Briefing opens inside the home reader and summarizes up to 50 articles from a selectable time range, with Critical, Medium, and Low relevance filters. Briefings are generated on demand and are not archived yet. The refresh button dispatches the existing GitHub Actions ingestion workflow and reloads articles when the run succeeds. Configure server-only `GITHUB_TOKEN` and `GITHUB_REPOSITORY` values to enable it; the token needs Actions read/write access to the repository. Choose the provider/model for on-demand AI work under **Settings → AI Provider**; the settings page checks the key and model against the provider API. RSS ingestion does not use AI credentials.
 
 GitHub Actions operations, required repository secrets, the UTC schedule, and cleanup modes are documented in [Phase 3 operations](docs/PHASE3_OPERATIONS.md). Vercel deployment, reader settings, and operational checks are documented in [Phase 4 deployment](docs/PHASE4_DEPLOYMENT.md).
 

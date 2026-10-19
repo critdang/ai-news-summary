@@ -63,9 +63,30 @@ type Preferences = {
   language: string;
   retentionDays: number;
   maxArticlesPerRun: number;
+  ingestionIntervalHours: 12 | 24;
   aiProvider: "gemini" | "groq" | "mock";
   aiModel: string;
 };
+
+type ProviderStatus = {
+  state: "available" | "missing_key" | "invalid_key" | "unreachable";
+  models: string[];
+};
+
+type ProviderStatuses = Record<"gemini" | "groq" | "mock", ProviderStatus>;
+
+const INITIAL_PROVIDER_STATUSES: ProviderStatuses = {
+  gemini: { state: "unreachable", models: [] },
+  groq: { state: "unreachable", models: [] },
+  mock: { state: "available", models: ["mock"] },
+};
+
+function providerStatusLabel(status: ProviderStatus): string {
+  if (status.state === "available") return "Connected";
+  if (status.state === "missing_key") return "Unavailable · API key missing";
+  if (status.state === "invalid_key") return "Unavailable · API key rejected";
+  return "Could not check connection";
+}
 
 function formatRelative(date: Date | null): string | null {
   if (!date) return "—";
@@ -91,10 +112,11 @@ export default function SettingsPage() {
     language: "vi",
     retentionDays: 45,
     maxArticlesPerRun: 20,
+    ingestionIntervalHours: 12,
     aiProvider: "groq",
     aiModel: "openai/gpt-oss-20b",
   });
-  const [availableProviders, setAvailableProviders] = useState({ gemini: false, groq: false, mock: true });
+  const [providerStatuses, setProviderStatuses] = useState<ProviderStatuses>(INITIAL_PROVIDER_STATUSES);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
   const [refreshingPreferences, setRefreshingPreferences] = useState(false);
@@ -106,6 +128,13 @@ export default function SettingsPage() {
     () => allocateSourceArticleLimits(sources, preferences.maxArticlesPerRun),
     [sources, preferences.maxArticlesPerRun]
   );
+  const selectedProviderStatus = providerStatuses[preferences.aiProvider];
+  const selectedModelAvailable = selectedProviderStatus.state === "available"
+    && selectedProviderStatus.models.includes(preferences.aiModel);
+  const fallbackProvider = preferences.aiProvider === "groq" ? "gemini" : "groq";
+  const fallbackModel = preferences.aiProvider === "mock"
+    ? undefined
+    : AI_MODELS[fallbackProvider].find((model) => providerStatuses[fallbackProvider].models.includes(model));
 
   // Add source form
   const [newUrl, setNewUrl] = useState("");
@@ -145,7 +174,7 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Failed to load preferences");
       const data = await res.json();
       setPreferences(data.data);
-      setAvailableProviders(data.availableProviders ?? { gemini: false, groq: false, mock: true });
+      setProviderStatuses(data.providerStatus ?? INITIAL_PROVIDER_STATUSES);
       return data.data as Preferences;
     } catch {
       setError("Không tải được cài đặt. Hãy thử tải lại trang.");
@@ -174,7 +203,7 @@ export default function SettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Không thể lưu cài đặt");
       setPreferences(data.data);
-      setPreferencesMessage("Đã lưu cài đặt. Worker sẽ dùng chúng ở lần chạy tiếp theo.");
+      setPreferencesMessage("Settings saved. RSS scheduling and future ingestion runs will use these preferences.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không thể lưu cài đặt");
     } finally {
@@ -188,7 +217,7 @@ export default function SettingsPage() {
     setRefreshingPreferences(true);
     const saved = await fetchPreferences();
     if (saved) {
-      setPreferencesMessage(`Đã tải cài đặt đã lưu. Tổng ngân sách: ${saved.maxArticlesPerRun} bài mỗi lần chạy.`);
+      setPreferencesMessage(`Đã tải cài đặt đã lưu. Ngân sách: ${saved.maxArticlesPerRun} bài mỗi lần chạy · RSS mỗi ${saved.ingestionIntervalHours} giờ.`);
     }
     setRefreshingPreferences(false);
   };
@@ -331,10 +360,11 @@ export default function SettingsPage() {
 
           <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
             <nav aria-label="Mục cài đặt" className="border-b border-border px-3 py-2 md:hidden">
-              <div role="tablist" aria-label="Mục cài đặt" className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+              <div role="tablist" aria-label="Mục cài đặt" className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1">
                 {[
                   ["sources", "Nguồn"],
                   ["runs", "Lịch sử"],
+                  ["ai", "AI"],
                   ["preferences", "Tuỳ chọn"],
                 ].map(([value, label]) => (
                   <button
@@ -546,7 +576,7 @@ export default function SettingsPage() {
               <Card className="mx-auto max-w-3xl">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-sm"><Cpu size={16} className="text-primary" />AI Provider</CardTitle>
-                  <p className="text-xs text-muted-foreground">Select the service and model for on-demand summaries, briefings, and scheduled ingestion.</p>
+                  <p className="text-xs text-muted-foreground">Choose the provider and model for article summaries and Daily Briefing. RSS ingestion stores articles without calling AI.</p>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSavePreferences} className="space-y-5">
@@ -558,18 +588,43 @@ export default function SettingsPage() {
                       ] as const).map(({ value, label, description, Icon }) => (
                         <button key={value} type="button" onClick={() => setPreferences((current) => ({ ...current, aiProvider: value, aiModel: AI_MODELS[value][0] }))} aria-pressed={preferences.aiProvider === value} className={`rounded-xl border p-4 text-left transition-colors ${preferences.aiProvider === value ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}>
                           <Icon size={18} className={preferences.aiProvider === value ? "text-primary" : "text-muted-foreground"} />
-                          <span className="mt-2 block text-sm font-semibold">{label}</span>
+                        <span className="mt-2 flex items-center gap-2 text-sm font-semibold">{label}{preferences.aiProvider === value && <Badge variant="outline" className="px-1.5 py-0 text-[9px]">Selected</Badge>}</span>
                           <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
-                          <span className={`mt-3 inline-flex items-center gap-1 text-[11px] ${availableProviders[value] ? "text-emerald-500" : "text-amber-500"}`}>{availableProviders[value] ? "Available" : value === "mock" ? "Available" : "API key not detected"}</span>
+                          <span className={`mt-3 inline-flex items-center gap-1 text-[11px] ${providerStatuses[value].state === "available" ? "text-emerald-500" : "text-amber-500"}`}>{providerStatusLabel(providerStatuses[value])}</span>
                         </button>
                       ))}
                     </div>
                     <div className="space-y-2">
                       <label htmlFor="ai-model" className="text-sm font-medium">Model</label>
+                      <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">Currently selected: </span>
+                        <strong>{preferences.aiProvider === "gemini" ? "Gemini" : preferences.aiProvider === "groq" ? "Groq" : "Mock"} · {preferences.aiModel}</strong>
+                      </div>
+                      {selectedProviderStatus.state !== "available" || !selectedModelAvailable ? <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {selectedProviderStatus.state === "invalid_key"
+                          ? "The selected provider rejected its API key."
+                          : selectedProviderStatus.state === "missing_key"
+                            ? "The selected provider API key is not configured."
+                            : selectedProviderStatus.state === "unreachable"
+                              ? "The selected provider could not be checked right now."
+                              : "The selected model is unavailable to this provider account."}
+                        {fallbackModel && providerStatuses[fallbackProvider].state === "available" && <> Requests may fall back to {fallbackProvider === "groq" ? "Groq" : "Gemini"} · {fallbackModel}.</>}
+                      </p> : <p className="text-xs text-emerald-600 dark:text-emerald-400">This model is available and will be preferred for new AI requests.</p>}
                       <select id="ai-model" value={preferences.aiModel} onChange={(event) => setPreferences((current) => ({ ...current, aiModel: event.target.value }))} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                        {AI_MODELS[preferences.aiProvider].map((model) => <option key={model} value={model}>{model}</option>)}
+                        {AI_MODELS[preferences.aiProvider].map((model) => {
+                          const status = providerStatuses[preferences.aiProvider];
+                          const modelAvailable = status.state === "available" && status.models.includes(model);
+                          const availability = status.state === "available"
+                            ? modelAvailable ? " (available)" : " (unavailable for this account)"
+                            : status.state === "invalid_key"
+                              ? " (provider unavailable · API key rejected)"
+                              : status.state === "missing_key"
+                                ? " (provider unavailable · API key missing)"
+                                : " (availability unknown)";
+                          return <option key={model} value={model} disabled={status.state === "available" && !modelAvailable}>{model}{preferences.aiProvider === "mock" ? " (available)" : availability}</option>;
+                        })}
                       </select>
-                      <p className="text-xs text-muted-foreground">Provider credentials stay on the server. If the selected provider has no configured key or is unavailable, the other configured provider is tried.</p>
+                      <p className="text-xs text-muted-foreground">Connection and model availability are checked against the provider API. Credentials stay on the server. If the selected provider fails during a request, a configured fallback may be tried.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <Button type="submit" disabled={savingPreferences}>{savingPreferences && <Loader2 size={14} className="mr-2 animate-spin" />}Save AI settings</Button>
@@ -621,6 +676,19 @@ export default function SettingsPage() {
                         onChange={(e) => setPreferences((current) => ({ ...current, retentionDays: Number(e.target.value) }))}
                       />
                       <p className="text-xs text-muted-foreground">Bài đã lưu và bài có ghi chú sẽ được giữ lại.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="rss-schedule" className="text-sm font-medium">Scheduled RSS update</label>
+                      <select
+                        id="rss-schedule"
+                        value={preferences.ingestionIntervalHours}
+                        onChange={(e) => setPreferences((current) => ({ ...current, ingestionIntervalHours: Number(e.target.value) as 12 | 24 }))}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value={12}>Twice daily (about every 12 hours)</option>
+                        <option value={24}>Daily (about every 24 hours)</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">GitHub Actions checks at 07:00 and 19:00 UTC. Daily runs wait for the selected interval; manual refresh runs immediately.</p>
                     </div>
                     <div className="space-y-2">
                       <label htmlFor="article-limit" className="text-sm font-medium">Tổng bài viết mỗi lần ingestion (1–50)</label>
