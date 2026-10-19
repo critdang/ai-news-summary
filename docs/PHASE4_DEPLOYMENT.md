@@ -31,29 +31,21 @@ settings or browser.
    access boundary. Do not expose it publicly until authentication and database
    ownership policies are implemented.
 
-5. To let the reader's refresh button start an RSS fetch, add `GITHUB_TOKEN` and
-   `GITHUB_REPOSITORY` as Vercel server environment variables. Use a fine-grained
-   token restricted to this repository with Actions read/write access; set the
-   repository value to `owner/name`. The token is read only by the server route
-   and must not use a `NEXT_PUBLIC_` prefix. The button dispatches the existing
-   ingestion workflow on `main`, reports its status, then reloads articles after
-   a successful run. Keep Vercel Deployment Protection enabled because API
-   routes are single-user and do not enforce application authentication.
+5. Add a strong random `CRON_SECRET` to the Vercel environment variables. Vercel
+  sends it automatically when invoking the routes in `vercel.json`; it protects
+  the ingestion and cleanup endpoints from public invocation. The reader refresh
+  button starts the same ingestion worker directly and polls its database-backed
+  run status. Keep Vercel Deployment Protection enabled because API routes are
+  single-user and do not enforce application authentication.
 
 ## Configure the scheduled worker
 
-In GitHub repository **Settings → Secrets and variables → Actions**, configure:
-
-- Secrets: `DATABASE_URL` (Supabase transaction pooler) and at least one of
-  `GEMINI_API_KEY` or `GROQ_API_KEY`.
-- Variables: optionally `AI_PROVIDER` (defaults to `groq`), `AI_MODEL`
-  (defaults to `gemini-3.8-flash`), `GROQ_MODEL` (defaults to
-  `openai/gpt-oss-20b`), `DEFAULT_LANGUAGE`, `MAX_ARTICLES_PER_RUN`, and
-
-The worker uses saved language and the total article budget on later runs.
-The cleanup worker uses the saved retention setting. Workflow cron times are UTC;
-scheduled jobs can start late and are not a guaranteed uptime service. Use the
-workflow **Run workflow** action to trigger a run manually.
+On the Vercel Hobby plan, Vercel deploys the schedules in `vercel.json`: ingestion
+runs at 07:00 UTC, and retention cleanup runs at 08:30 UTC. Configure `DATABASE_URL`,
+`DIRECT_URL`, `CRON_SECRET`, and the AI provider variables in the Vercel project.
+The worker uses saved language and the total article budget on later runs; cleanup
+uses the saved retention setting. Cron availability and execution duration depend
+on the Vercel plan, so review the project usage and function logs after deployment.
 
 ## Check operations
 
@@ -62,8 +54,8 @@ workflow **Run workflow** action to trigger a run manually.
 - Settings → Nguồn shows each feed's latest fetch and health state.
 - `GET /api/runs` returns recent run status, counts, errors, and last successful
   update time; `GET /api/health` returns per-source health.
-- Review Vercel function logs for reader/API failures and GitHub Actions logs
-  for ingestion and cleanup failures. Logs must not contain connection strings
+- Review Vercel function logs for reader/API, ingestion, and cleanup failures.
+  Logs must not contain connection strings
   or API keys.
 
 ## Recovery and data safety

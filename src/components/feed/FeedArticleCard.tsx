@@ -1,14 +1,13 @@
 "use client";
 
-import { memo, useState, useEffect, useMemo, useCallback } from "react";
-import { cn } from "@/lib/utils";
+import { memo, useState, useEffect, useCallback } from "react";
+import { cn, formatPublishedDate } from "@/lib/utils";
 import {
   Bookmark,
   BookmarkCheck,
   Clock,
   ExternalLink,
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
 import type { ViewMode, ArticleWithFeed } from "@/types";
 import { isSafeUrl } from "@/lib/utils/url-validator";
 
@@ -19,23 +18,13 @@ type Props = {
   isSelected?: boolean;
 };
 
-function useTimeAgo(date: Date | null): string | null {
-  // Compute once per date change. Avoids one setInterval timer per rendered
-  // card (a bookmarks/feed list can mount dozens); relative time refreshes on
-  // the next render/navigation, which is sufficient here.
-  return useMemo(
-    () => (date ? formatDistanceToNow(new Date(date), { addSuffix: true }) : null),
-    [date]
-  );
-}
-
 export const FeedArticleCard = memo(function FeedArticleCard({
   article,
   viewMode,
   onSelect,
   isSelected = false,
 }: Props) {
-  const timeAgo = useTimeAgo(article.publishedAt);
+  const publishedDate = formatPublishedDate(article.publishedAt);
   const [bookmarked, setBookmarked] = useState(article.isBookmarked);
   const [read, setRead] = useState(article.isRead);
 
@@ -101,12 +90,12 @@ export const FeedArticleCard = memo(function FeedArticleCard({
                 <span>{article.author}</span>
               </>
             )}
-            {timeAgo && (
+            {article.publishedAt && (
               <>
                 <span className="text-border">·</span>
                 <span className="flex items-center gap-1.5">
                   <Clock size={12} />
-                  {timeAgo}
+                  {publishedDate}
                 </span>
               </>
             )}
@@ -172,10 +161,10 @@ export const FeedArticleCard = memo(function FeedArticleCard({
           <span className="font-semibold text-primary/70">
             {article.feed.title}
           </span>
-          {timeAgo && (
+          {article.publishedAt && (
             <>
               <span className="text-border">·</span>
-              <span>{timeAgo}</span>
+              <span>{publishedDate}</span>
             </>
           )}
         </div>
@@ -234,10 +223,10 @@ export const FeedArticleCard = memo(function FeedArticleCard({
               <span>{article.author}</span>
             </>
           )}
-          {timeAgo && (
+          {article.publishedAt && (
             <>
               <span className="text-border">·</span>
-              <span>{timeAgo}</span>
+              <span>{publishedDate}</span>
             </>
           )}
         </div>

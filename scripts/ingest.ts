@@ -1,7 +1,7 @@
 /**
  * scripts/ingest.ts
  *
- * Scheduled ingestion worker (run by GitHub Actions, cron + workflow_dispatch).
+ * Scheduled ingestion worker (run by Vercel Cron or the local CLI).
  *
  * For each configured source:
  *   1. Fetch + parse the RSS feed (SSRF-safe via src/lib/rss/parser).
@@ -240,7 +240,8 @@ async function updateFeedHealth(
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function runIngestion(): Promise<void> {
+export async function runIngestion(options: { scheduled?: boolean } = {}): Promise<void> {
+  const scheduled = options.scheduled ?? process.env.INGESTION_SCHEDULED === "true";
   const startedAt = Date.now();
   await ensureDefaultCategories();
   await ensureSourcePreference();
@@ -248,7 +249,7 @@ export async function runIngestion(): Promise<void> {
   const preferences = await prisma.userPreference.findFirst({
     select: { maxArticlesPerSource: true, ingestionIntervalHours: true },
   });
-  if (process.env.INGESTION_SCHEDULED === "true") {
+  if (scheduled) {
     const latestRun = await prisma.ingestionRun.findFirst({
       where: { scheduled: true, completedAt: { not: null } },
       orderBy: { completedAt: "desc" },
@@ -274,7 +275,7 @@ export async function runIngestion(): Promise<void> {
   const run = await prisma.ingestionRun.create({
     data: {
       status: "running",
-      scheduled: process.env.INGESTION_SCHEDULED === "true",
+      scheduled,
       sourcesProcessed: 0,
     },
   });

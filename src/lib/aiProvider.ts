@@ -592,7 +592,7 @@ export async function summarizeArticle(
   excerpt: string | null,
   language: string,
   selection?: AIProviderSelection
-): Promise<{ result: AIResult; provider: string } | null> {
+): Promise<{ result: AIResult; provider: string; model: string } | null> {
   const providers = getProviders(selection);
   if (providers.length === 0) {
     throw new Error("No AI provider configured (set GEMINI_API_KEY or GROQ_API_KEY)");
@@ -607,7 +607,7 @@ export async function summarizeArticle(
   for (const provider of ordered) {
     try {
       const result = await provider.summarizeArticle(title, excerpt, language);
-      return { result, provider: provider.name };
+      return { result, provider: provider.name, model: provider.model };
     } catch (err) {
       errors.push(`${provider.name}: ${err instanceof Error ? err.message : String(err)}`);
       // Continue to next provider (fallback). One provider failing must not abort the run.

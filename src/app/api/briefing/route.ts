@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { summarizeBatch, type AIProviderSelection, type BatchArticleInput } from "@/lib/aiProvider";
+import { summarizeArticle, summarizeBatch, type AIProviderSelection, type BatchArticleInput } from "@/lib/aiProvider";
 import { mapWithConcurrency, prepareArticleBatches } from "@/lib/batchProcessing";
 import { briefingImpact } from "@/lib/briefing";
 import { resolveAIModel } from "@/lib/preferences";
 import { parseFeed } from "@/lib/rss/parser";
 import { canonicalizeUrl } from "@/lib/urlUtils";
 import { allocateSourceArticleLimits } from "@/lib/sourceLimits";
+import { scrapeArticle } from "@/lib/rss/scraper";
+import { validateFeedUrl } from "@/lib/utils/url-validator";
+import * as cheerio from "cheerio";
 
 export const maxDuration = 60;
 
@@ -138,6 +141,62 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "A briefing request is required" }, { status: 400 });
   }
   const input = body as Record<string, unknown>;
+  const requestedUrl = typeof input.url === "string" ? input.url.trim() : "";
+  if (requestedUrl) {
+    if (requestedUrl.length > 2_000) {
+      return NextResponse.json({ error: "Article URL is too long" }, { status: 400 });
+    }
+    const validation = validateFeedUrl(requestedUrl);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error || "Invalid article URL" }, { status: 400 });
+    }
+
+    try {
+      const [preferences, scraped] = await Promise.all([
+        prisma.userPreference.findFirst({ select: { language: true, aiProvider: true, aiModel: true } }),
+        scrapeArticle(requestedUrl),
+      ]);
+      if (!scraped) {
+        return NextResponse.json({ error: "Could not extract readable article content from this URL" }, { status: 422 });
+      }
+      const provider = providerSelection(preferences);
+      const articleText = scraped.content
+        ? cheerio.load(scraped.content).text().replace(/\s+/g, " ").trim().slice(0, 12_000)
+        : scraped.excerpt;
+      const outcome = await summarizeArticle(
+        scraped.title,
+        articleText,
+        preferences?.language || process.env.DEFAULT_LANGUAGE || "vi",
+        provider,
+      );
+      if (!outcome) {
+        return NextResponse.json({ error: "AI providers could not summarize this article" }, { status: 502 });
+      }
+      const parsedUrl = new URL(requestedUrl);
+      return NextResponse.json({
+        data: [{
+          id: `url-${encodeURIComponent(parsedUrl.hostname)}-${Date.now()}`,
+          title: scraped.title,
+          url: requestedUrl,
+          publisher: parsedUrl.hostname,
+          category: "From URL",
+          publishedAt: null,
+          summary: outcome.result.summary,
+          relevanceScore: outcome.result.relevanceScore,
+          relevanceExplanation: outcome.result.relevanceExplanation,
+          impact: briefingImpact(outcome.result.relevanceScore),
+          tags: outcome.result.tags,
+        }],
+        scanned: 1,
+        provider: outcome.provider,
+        model: outcome.model,
+      });
+    } catch (error) {
+      console.error("URL briefing generation failed:", error);
+      return NextResponse.json({ error: "Could not fetch or generate a briefing for this URL" }, { status: 500 });
+    }
+  }
+
   const hours = Number(input.hours ?? 24);
   if (!Number.isInteger(hours) || !ALLOWED_HOURS.has(hours)) {
     return NextResponse.json({ error: "Choose a range from 12 hours to 7 days" }, { status: 400 });

@@ -173,9 +173,21 @@ export default function SettingsPage() {
       const res = await fetch("/api/preferences", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to load preferences");
       const data = await res.json();
-      setPreferences(data.data);
       setProviderStatuses(data.providerStatus ?? INITIAL_PROVIDER_STATUSES);
-      return data.data as Preferences;
+      const loaded = data.data as Preferences;
+      const statuses = data.providerStatus ?? INITIAL_PROVIDER_STATUSES;
+      const providerUnavailable = statuses[loaded.aiProvider].state !== "available";
+      const configuredFallback: "gemini" | "groq" = loaded.aiProvider === "groq" ? "gemini" : "groq";
+      const fallbackAvailable = statuses[configuredFallback].state === "available";
+      const effective = providerUnavailable && fallbackAvailable
+        ? {
+            ...loaded,
+            aiProvider: configuredFallback,
+            aiModel: AI_MODELS[configuredFallback][0],
+          }
+        : loaded;
+      setPreferences(effective);
+      return effective;
     } catch {
       setError("Không tải được cài đặt. Hãy thử tải lại trang.");
       return null;
@@ -688,7 +700,7 @@ export default function SettingsPage() {
                         <option value={12}>Twice daily (about every 12 hours)</option>
                         <option value={24}>Daily (about every 24 hours)</option>
                       </select>
-                      <p className="text-xs text-muted-foreground">GitHub Actions checks at 07:00 and 19:00 UTC. Daily runs wait for the selected interval; manual refresh runs immediately.</p>
+                      <p className="text-xs text-muted-foreground">Vercel Hobby Cron checks once daily at 07:00 UTC. Manual refresh runs immediately.</p>
                     </div>
                     <div className="space-y-2">
                       <label htmlFor="article-limit" className="text-sm font-medium">Tổng bài viết mỗi lần ingestion (1–50)</label>

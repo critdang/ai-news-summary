@@ -19,6 +19,7 @@ import {
   memo,
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Bookmark,
   BookmarkCheck,
@@ -35,13 +36,14 @@ import {
   Newspaper,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatPublishedDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useKeyboardShortcuts } from "@/lib/hooks/useKeyboardShortcuts";
 import { nextArticleIndex } from "@/lib/readerNavigation";
 import { rssPlainText, sanitizeRssHtml } from "@/lib/rss/displayContent";
@@ -125,20 +127,6 @@ function ArticleReaderPanel({
   );
 }
 
-function formatRelative(date: Date | null): string | null {
-  if (!date) return null;
-  const d = new Date(date);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return "vừa xong";
-  if (diffMins < 60) return `${diffMins} phút trước`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours} giờ trước`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays} ngày trước`;
-}
-
 function formatDateTime(date: Date | null): string {
   if (!date) return "date unavailable";
   return new Intl.DateTimeFormat(undefined, {
@@ -187,13 +175,6 @@ const ArticleItem = memo(function ArticleItem({
       )}
       aria-pressed={isSelected}
     >
-      <div className="flex-shrink-0 mt-1">
-        {!article.bookmarked ? (
-          <Bookmark size={14} className="text-muted-foreground" />
-        ) : (
-          <BookmarkCheck size={14} className="text-primary" />
-        )}
-      </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
           {article.source?.category && (
@@ -201,8 +182,8 @@ const ArticleItem = memo(function ArticleItem({
               {article.source.category}
             </Badge>
           )}
-          <span title={`Published ${formatDateTime(article.publishedAt)}`}>
-            <Clock size={10} /> Published {formatDateTime(article.publishedAt)}{article.publishedAt ? ` · ${formatRelative(article.publishedAt)}` : ""}
+          <span className="inline-flex items-center gap-1" title={`Published ${formatPublishedDate(article.publishedAt)}`}>
+            <Clock size={10} /> Published {formatPublishedDate(article.publishedAt)}
           </span>
           {article.processingStatus === "failed" && (
             <span className="text-destructive">Lỗi AI</span>
@@ -464,13 +445,13 @@ export default function ReaderPage() {
         const status = await statusResponse.json();
         if (!statusResponse.ok) throw new Error(status.error || "Could not check ingestion status");
         if (status.status === "completed") {
-          if (status.conclusion !== "success") throw new Error(`RSS ingestion ${status.conclusion || "failed"}. Check GitHub Actions for details.`);
+          if (status.conclusion !== "success") throw new Error(`RSS ingestion ${status.conclusion || "failed"}. Check the Vercel function logs for details.`);
           complete = true;
           break;
         }
         setRefreshMessage(status.status === "queued" ? "RSS ingestion is queued…" : "RSS ingestion is running…");
       }
-      if (!complete) throw new Error("Ingestion is taking longer than expected. Check GitHub Actions; refresh the feed after it finishes.");
+      if (!complete) throw new Error("Ingestion is taking longer than expected. Check the Vercel function logs; refresh the feed after it finishes.");
       await Promise.all([fetchSources(), fetchArticles(page)]);
       setRefreshMessage("Feeds updated with the latest RSS articles.");
       window.setTimeout(() => setRefreshMessage(null), 8000);
@@ -488,7 +469,7 @@ export default function ReaderPage() {
     <div className="flex h-screen flex-col overflow-hidden">
       {/* Header */}
       <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
+        <Link href="/" aria-label="Go to AI News Summary homepage" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Rss size={16} />
           </div>
@@ -498,8 +479,9 @@ export default function ReaderPage() {
               Software Engineering · AI/LLM · Data Science · 3D Printing · Maker
             </p>
           </div>
-        </div>
+        </Link>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <ThemeToggle compact />
           <Button
             variant="outline"
             size="sm"
@@ -641,25 +623,25 @@ export default function ReaderPage() {
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center">
               <label className="sr-only" htmlFor="mobile-category-filter">Filter by category</label>
               <select
                 id="mobile-category-filter"
                 aria-label="Filter by category"
                 value={categoryFilter}
                 onChange={(e) => handleCategoryChange(e.target.value)}
-                className="h-8 max-w-[160px] rounded-md border border-input bg-background px-2 text-xs md:hidden"
+                className="h-10 min-w-0 rounded-md border border-input bg-background px-2 text-xs md:hidden"
               >
                 <option value="">All categories</option>
                 {categories.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
               </select>
-              <Tabs defaultValue="all" className="text-[12px]">
-                <TabsList className="gap-1">
+              <Tabs defaultValue="all" className="col-span-2 text-[12px] sm:col-span-1">
+                <TabsList className="w-full gap-1 sm:w-auto">
                   <TabsTrigger
                     value="all"
                     onClick={() => { setBookmarkFilter("all"); setPage(1); }}
                     className={cn(
-                      "px-2 py-1 rounded-md transition-colors",
+                      "min-h-9 flex-1 px-2 py-1 rounded-md transition-colors sm:flex-none",
                       bookmarkFilter === "all"
                         ? "bg-primary text-primary-foreground"
                         : "data-[state=active]:bg-muted data-[state=active]:text-muted-foreground"
@@ -671,7 +653,7 @@ export default function ReaderPage() {
                     value="bookmarked"
                     onClick={() => { setBookmarkFilter("bookmarked"); setPage(1); }}
                     className={cn(
-                      "px-2 py-1 rounded-md transition-colors",
+                      "min-h-9 flex-1 px-2 py-1 rounded-md transition-colors sm:flex-none",
                       bookmarkFilter === "bookmarked"
                         ? "bg-primary text-primary-foreground"
                         : "data-[state=active]:bg-muted data-[state=active]:text-muted-foreground"
@@ -683,7 +665,7 @@ export default function ReaderPage() {
                     value="unbookmarked"
                     onClick={() => { setBookmarkFilter("unbookmarked"); setPage(1); }}
                     className={cn(
-                      "px-2 py-1 rounded-md transition-colors",
+                      "min-h-9 flex-1 px-2 py-1 rounded-md transition-colors sm:flex-none",
                       bookmarkFilter === "unbookmarked"
                         ? "bg-primary text-primary-foreground"
                         : "data-[state=active]:bg-muted data-[state=active]:text-muted-foreground"
@@ -698,7 +680,7 @@ export default function ReaderPage() {
                 id="status-filter"
                 value={statusFilter}
                 onChange={(e) => handleStatusChange(e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-10 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:h-8"
               >
                 <option value="">All statuses</option>
                 <option value="completed">Summarized</option>
@@ -710,7 +692,7 @@ export default function ReaderPage() {
                 id="sort-articles"
                 value={sort}
                 onChange={(e) => handleSortChange(e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-10 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:h-8"
               >
                 <option value="publishedAt:desc">Newest published</option>
                 <option value="publishedAt:asc">Oldest published</option>
@@ -721,7 +703,7 @@ export default function ReaderPage() {
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="font-medium" aria-live="polite">{total}</span> bài viết
               </div>
-              <div className="flex items-center justify-between border-l border-border pl-2">
+              <div className="col-span-2 flex items-center justify-between border-t border-border pt-2 sm:col-span-1 sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
                 <span className="text-[11px]">{page} / {totalPages}</span>
                 <div className="flex items-center gap-1">
                   <Button
@@ -832,10 +814,10 @@ export default function ReaderPage() {
 
       {/* Reading panel (sheet) */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent className="p-0 h-full w-full md:w-[560px] lg:hidden">
+        <SheetContent showCloseButton={false} className="!w-full p-0 h-full lg:hidden">
           <div className="flex h-full flex-col border-l border-border bg-background">
-            <div className="flex-shrink-0 border-b border-border px-5 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex-shrink-0 border-b border-border px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -845,7 +827,7 @@ export default function ReaderPage() {
                   <ChevronLeft size={16} />
                 </Button>
                 <div>
-                  <h2 className="text-sm font-semibold text-foreground">
+                  <h2 className="truncate text-sm font-semibold text-foreground">
                     {selectedArticle?.source?.title || "Bài viết"}
                   </h2>
                   <p className="text-[11px] text-muted-foreground leading-none">
@@ -853,12 +835,12 @@ export default function ReaderPage() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex shrink-0 items-center gap-3">
                 {selectedArticle && (
                   <>
                     <button
                       onClick={() => toggleBookmark(selectedArticle.id)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-muted transition-colors"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-muted transition-colors"
                       title={selectedArticle.bookmarked ? "Bỏ lưu" : "Lưu bài viết"}
                       aria-label={selectedArticle.bookmarked ? "Bỏ lưu" : "Lưu bài viết"}
                     >
@@ -872,7 +854,7 @@ export default function ReaderPage() {
                       href={selectedArticle.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-muted transition-colors"
+                      className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-muted transition-colors"
                       title="Mở bài gốc"
                       aria-label="Mở bài gốc"
                     >

@@ -10,8 +10,28 @@ const THEMES = [
   { id: "system" as const, icon: Monitor, label: "System" },
 ];
 
-export function ThemeToggle({ collapsed = false }: { collapsed?: boolean }) {
+export function ThemeToggle({
+  collapsed = false,
+  compact = false,
+}: {
+  collapsed?: boolean;
+  compact?: boolean;
+}) {
   const { theme, setTheme } = useTheme();
+
+  if (compact) {
+    const isDark = theme === "dark";
+    return (
+      <button
+        onClick={() => setTheme(isDark ? "light" : "dark")}
+        className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background hover:bg-muted transition-colors"
+        title={`Switch to ${isDark ? "light" : "dark"} theme`}
+        aria-label={`Switch to ${isDark ? "light" : "dark"} theme`}
+      >
+        {isDark ? <Sun size={14} /> : <Moon size={14} />}
+      </button>
+    );
+  }
 
   if (collapsed) {
     // Cycle through themes on click

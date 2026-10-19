@@ -8,7 +8,7 @@ Data Science, 3D Printing, 3D Modeling/CAD and Maker projects.
 - Prefer the existing Feed2040 codebase as the starting point.
 - Frontend: Next.js deployed on Vercel.
 - Database: Supabase PostgreSQL.
-- Scheduled ingestion: GitHub Actions.
+- Scheduled ingestion and cleanup: Vercel Cron route handlers.
 - AI providers: Gemini and Groq behind a provider abstraction.
 - Prefer free-tier services where practical.
 - Do not introduce an always-on server or Redis without a clear need

@@ -52,6 +52,8 @@ export default function BriefingPage({ embedded = false }: { embedded?: boolean 
   const [truncated, setTruncated] = useState(false);
   const [refresh, setRefresh] = useState<RefreshReport | null>(null);
   const [providerInfo, setProviderInfo] = useState<{ provider: string | null; model: string | null } | null>(null);
+  const [articleUrl, setArticleUrl] = useState("");
+  const [briefingMode, setBriefingMode] = useState<"feeds" | "url">("feeds");
 
   useEffect(() => {
     fetch("/api/sources")
@@ -94,6 +96,37 @@ export default function BriefingPage({ embedded = false }: { embedded?: boolean 
     }
   }
 
+  async function generateUrlBriefing() {
+    const url = articleUrl.trim();
+    if (!url) {
+      setError("Enter an article URL first");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setRefresh(null);
+    setProviderInfo(null);
+    try {
+      const response = await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "URL briefing generation failed");
+      setArticles(body.data || []);
+      setScanned(body.scanned || 0);
+      setTruncated(false);
+      setProviderInfo({ provider: body.provider ?? null, model: body.model ?? null });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "URL briefing generation failed");
+      setArticles([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggleItem(value: string, current: string[], set: (next: string[]) => void) {
     set(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
   }
@@ -119,19 +152,59 @@ export default function BriefingPage({ embedded = false }: { embedded?: boolean 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 p-5 md:p-8">
           <section className="rounded-2xl border border-border bg-card p-5 md:p-6">
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold"><Sparkles size={16} className="text-primary" />Generate an AI-powered briefing</div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mr-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 size={13} />Range</span>
-              {RANGES.map((range) => <button key={range.hours} onClick={() => setHours(range.hours)} aria-pressed={hours === range.hours} className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium", hours === range.hours ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground")}>{range.label}</button>)}
+            <div className="mb-5 flex rounded-xl border border-border bg-muted/40 p-1">
+              <button
+                type="button"
+                onClick={() => setBriefingMode("feeds")}
+                aria-pressed={briefingMode === "feeds"}
+                className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors", briefingMode === "feeds" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+              >
+                <Rss size={15} className="mr-2 inline" />Saved feeds
+              </button>
+              <button
+                type="button"
+                onClick={() => setBriefingMode("url")}
+                aria-pressed={briefingMode === "url"}
+                className={cn("flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors", briefingMode === "url" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+              >
+                <ExternalLink size={15} className="mr-2 inline" />From URL
+              </button>
             </div>
-            {categories.length > 0 && <div className="mt-4 flex flex-wrap items-center gap-2"><span className="mr-1 text-xs text-muted-foreground">Categories</span>{categories.map((category) => <button key={category} onClick={() => toggleItem(category, selectedCategories, setSelectedCategories)} aria-pressed={selectedCategories.includes(category)} className={cn("rounded-full border px-2.5 py-1 text-xs", selectedCategories.includes(category) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>{category}</button>)}</div>}
-            <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
-              <Button onClick={() => void generateBriefing()} disabled={loading} className="flex-1">
-                {loading ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
-                {loading ? "Fetching feeds and generating…" : "Generate Briefing"}
-              </Button>
-              <span className="hidden text-xs text-muted-foreground sm:inline">Summarizes up to 50 recent articles</span>
-            </div>
+            {briefingMode === "feeds" ? (
+              <>
+                <div className="mb-4 flex items-center gap-2 text-sm font-semibold"><Sparkles size={16} className="text-primary" />Generate from saved RSS feeds</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 size={13} />Range</span>
+                  {RANGES.map((range) => <button key={range.hours} onClick={() => setHours(range.hours)} aria-pressed={hours === range.hours} className={cn("rounded-lg border px-3 py-1.5 text-xs font-medium", hours === range.hours ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground")}>{range.label}</button>)}
+                </div>
+                {categories.length > 0 && <div className="mt-4 flex flex-wrap items-center gap-2"><span className="mr-1 text-xs text-muted-foreground">Categories</span>{categories.map((category) => <button key={category} onClick={() => toggleItem(category, selectedCategories, setSelectedCategories)} aria-pressed={selectedCategories.includes(category)} className={cn("rounded-full border px-2.5 py-1 text-xs", selectedCategories.includes(category) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>{category}</button>)}</div>}
+                <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
+                  <Button onClick={() => void generateBriefing()} disabled={loading} className="flex-1">
+                    {loading ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
+                    {loading ? "Fetching feeds and generating…" : "Generate Briefing"}
+                  </Button>
+                  <span className="hidden text-xs text-muted-foreground sm:inline">Summarizes up to 50 recent articles</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><ExternalLink size={16} className="text-primary" />Generate from one article URL</div>
+                <p className="mb-4 text-xs text-muted-foreground">Paste a public news article URL. The article is fetched, cleaned, and summarized without refreshing your saved feeds.</p>
+                <label htmlFor="briefing-url" className="sr-only">Article URL</label>
+                <input
+                  id="briefing-url"
+                  type="url"
+                  value={articleUrl}
+                  onChange={(event) => setArticleUrl(event.target.value)}
+                  placeholder="https://example.com/article"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <Button onClick={() => void generateUrlBriefing()} disabled={loading || !articleUrl.trim()} className="mt-4 w-full">
+                  {loading ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
+                  {loading ? "Fetching article and generating…" : "Generate Briefing from URL"}
+                </Button>
+              </>
+            )}
           </section>
 
           <section aria-label="Briefing results" className="space-y-4">
