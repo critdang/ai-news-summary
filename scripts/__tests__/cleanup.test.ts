@@ -3,20 +3,23 @@ import { cleanupMode, runCleanup } from "../cleanup";
 
 jest.mock("@/lib/prisma", () => ({
   prisma: {
-    userPreference: { findFirst: jest.fn() },
+    user: { findMany: jest.fn() },
+    userPreference: { findUnique: jest.fn() },
     article: { count: jest.fn(), deleteMany: jest.fn() },
     $disconnect: jest.fn(),
   },
 }));
 
 const mockPrisma = prisma as unknown as {
-  userPreference: { findFirst: jest.Mock };
+  user: { findMany: jest.Mock };
+  userPreference: { findUnique: jest.Mock };
   article: { count: jest.Mock; deleteMany: jest.Mock };
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockPrisma.userPreference.findFirst.mockResolvedValue({ retentionDays: 30 });
+  mockPrisma.user.findMany.mockResolvedValue([{ id: "user-1" }]);
+  mockPrisma.userPreference.findUnique.mockResolvedValue({ retentionDays: 30 });
   mockPrisma.article.count.mockResolvedValue(3);
   mockPrisma.article.deleteMany.mockResolvedValue({ count: 3 });
 });

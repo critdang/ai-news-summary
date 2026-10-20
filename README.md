@@ -8,7 +8,8 @@ A personal news reader for software engineering, AI/LLMs, data science, 3D print
 - Supabase PostgreSQL for article and source data.
 - A short-lived ingestion worker and retention cleanup scheduled with Vercel Cron.
 - Server-side AI provider integration; credentials stay in server-side environment variables.
-- No always-on server or Redis requirement for the planned single-user deployment.
+- Multi-user credentials login with per-user feeds, folders, preferences, and ingestion history.
+- No always-on server or Redis requirement.
 
 Phase and setup details are in [the project blueprint](docs/PROJECT_BLUEPRINT.md), [architecture](docs/ARCHITECTURE.md), [development notes](docs/DEVELOPMENT_NOTES.md), and [Phase 2 MVP notes](docs/PHASE2_MVP.md). The four-repository source, dependency, and license review is recorded in [the reference audit](docs/REFERENCE_REPOSITORIES.md).
 
@@ -22,7 +23,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Configure the values in `.env` for the services you use. Never commit populated credentials. Database and AI credentials belong only in server-side or Vercel environment variables; they must not be exposed to browser code.
+Configure the values in `.env` for the services you use, including a random `AUTH_SECRET` (for example, `openssl rand -base64 32`). Never commit populated credentials. Database and AI credentials belong only in server-side or Vercel environment variables; they must not be exposed to browser code.
+
+After configuring the database, apply migrations with `node --env-file-if-exists=.env ./node_modules/prisma/build/index.js migrate deploy --config prisma/prisma.config.ts`. The first visit opens `/setup`; create the initial admin account there. That first account adopts existing categories, feeds, preferences, and ingestion history. Later users can register from `/register`; their data is isolated from other accounts.
 
 Available project commands:
 
@@ -46,6 +49,8 @@ In the reader, press `J`/`K` to move between articles, `/` to focus search, `B` 
 The reader uses three panels for feed navigation, article selection, and reading. Daily Briefing opens inside the home reader and summarizes up to 50 articles from a selectable time range, with Critical, Medium, and Low relevance filters. Briefings are generated on demand and are not archived yet. The refresh button starts the same server-side ingestion worker used by Vercel Cron and reloads articles when the run succeeds. Choose the provider/model for on-demand AI work under **Settings → AI Provider**; the settings page checks the key and model against the provider API. RSS ingestion does not use AI credentials.
 
 Vercel deployment, Cron schedules, reader settings, and operational checks are documented in [Phase 4 deployment](docs/PHASE4_DEPLOYMENT.md).
+
+**Discover → Projects** adds user-owned GitHub public repository searches. Configure a search by query, topic, language, ranking, and result limit, then sync it to persist project metadata and a daily UTC snapshot of stars/forks. Projects are isolated from News Feed articles and Daily Briefing. An optional server-only `GITHUB_TOKEN` raises the shared GitHub API quota; anonymous access works with GitHub's lower rate limit. GitHub Search results are ranked by the selected API criterion, not an official Trending feed. Releases and generic JSON/REST sources are not yet implemented; see [architecture](docs/ARCHITECTURE.md).
 
 ## Attribution and license
 

@@ -24,6 +24,9 @@ import {
   Cpu,
   Bot,
   Laptop,
+  FolderOpen,
+  Pencil,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,12 +36,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { allocateSourceArticleLimits } from "@/lib/sourceLimits";
 import { AI_MODELS } from "@/lib/preferences";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { ConnectorSourceManager } from "@/components/settings/ConnectorSourceManager";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
+import { toast } from "sonner";
 
 type Source = {
   id: string;
   title: string;
   url: string;
   category: string;
+  categoryId: string;
+  categoryColor?: string | null;
   lastFetched: Date | null;
   errorCount: number;
   fetchError: string | null;
@@ -74,6 +84,8 @@ type ProviderStatus = {
 };
 
 type ProviderStatuses = Record<"gemini" | "groq" | "mock", ProviderStatus>;
+type ProviderCredentialState = Record<"gemini" | "groq", boolean>;
+type Folder = { id: string; name: string; slug: string; color: string | null; _count?: { sources: number } };
 
 const INITIAL_PROVIDER_STATUSES: ProviderStatuses = {
   gemini: { state: "unreachable", models: [] },
@@ -105,6 +117,13 @@ function formatRelative(date: Date | null): string | null {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("sources");
   const [sources, setSources] = useState<Source[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState("#6366f1");
+  const [savingFolder, setSavingFolder] = useState(false);
+  const [savingFolderId, setSavingFolderId] = useState<string | null>(null);
+  const [folderDrafts, setFolderDrafts] = useState<Record<string, { name: string; color: string }>>({});
   const [runs, setRuns] = useState<Run[]>([]);
   const [lastSuccessfulUpdate, setLastSuccessfulUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +136,11 @@ export default function SettingsPage() {
     aiModel: "openai/gpt-oss-20b",
   });
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatuses>(INITIAL_PROVIDER_STATUSES);
+  const [providerCredentials, setProviderCredentials] = useState<ProviderCredentialState>({ gemini: false, groq: false });
+  const [providerKeyDrafts, setProviderKeyDrafts] = useState({ gemini: "", groq: "" });
+  const [savingProviderKey, setSavingProviderKey] = useState<"gemini" | "groq" | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [providerKeyMessage, setProviderKeyMessage] = useState<string | null>(null);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState<string | null>(null);
   const [refreshingPreferences, setRefreshingPreferences] = useState(false);
@@ -129,6 +153,7 @@ export default function SettingsPage() {
     [sources, preferences.maxArticlesPerRun]
   );
   const selectedProviderStatus = providerStatuses[preferences.aiProvider];
+  const selectedCredentialProvider = preferences.aiProvider === "gemini" ? "gemini" : "groq";
   const selectedModelAvailable = selectedProviderStatus.state === "available"
     && selectedProviderStatus.models.includes(preferences.aiModel);
   const fallbackProvider = preferences.aiProvider === "groq" ? "gemini" : "groq";
@@ -156,6 +181,23 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const fetchFolders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load folders");
+      const nextFolders = data.data as Folder[];
+      setFolders(nextFolders);
+      setFolderDrafts(Object.fromEntries(nextFolders.map((folder) => [folder.id, {
+        name: folder.name,
+        color: folder.color || "#6366f1",
+      }])));
+      if (nextFolders.length) setNewCategory((current) => current || nextFolders[0].name);
+    } catch {
+      /* Keep source management available if folder loading fails. */
+    }
+  }, []);
+
   const fetchRuns = useCallback(async () => {
     try {
       const res = await fetch("/api/runs");
@@ -174,6 +216,7 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Failed to load preferences");
       const data = await res.json();
       setProviderStatuses(data.providerStatus ?? INITIAL_PROVIDER_STATUSES);
+      setProviderCredentials(data.providerCredentials ?? { gemini: false, groq: false });
       const loaded = data.data as Preferences;
       const statuses = data.providerStatus ?? INITIAL_PROVIDER_STATUSES;
       const providerUnavailable = statuses[loaded.aiProvider].state !== "available";
@@ -198,8 +241,59 @@ export default function SettingsPage() {
     // Data fetching on mount triggers state updates via the fetch helpers;
     // this is the standard React data-fetching pattern.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    Promise.all([fetchSources(), fetchRuns(), fetchPreferences()]);
-  }, [fetchSources, fetchRuns, fetchPreferences]);
+    Promise.all([fetchSources(), fetchRuns(), fetchPreferences(), fetchFolders()]).finally(() => setInitialLoading(false));
+  }, [fetchSources, fetchRuns, fetchPreferences, fetchFolders]);
+
+  const handleCreateFolder = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSavingFolder(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newFolderName, color: newFolderColor }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not create folder");
+      setNewCategory(data.data.name);
+      setNewFolderName("");
+      await fetchFolders();
+      toast.success(`Folder “${data.data.name}” created`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not create folder";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSavingFolder(false);
+    }
+  };
+
+  const handleSaveFolder = async (folder: Folder) => {
+    const draft = folderDrafts[folder.id];
+    if (!draft) return;
+    setSavingFolderId(folder.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/categories/${folder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not update folder");
+      if (newCategory === folder.name) setNewCategory(data.data.name);
+      await fetchFolders();
+      await fetchSources();
+      toast.success(`Folder “${data.data.name}” updated`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not update folder";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSavingFolderId(null);
+    }
+  };
 
   const handleSavePreferences = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,10 +310,39 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error(data.error || "Không thể lưu cài đặt");
       setPreferences(data.data);
       setPreferencesMessage("Settings saved. RSS scheduling and future ingestion runs will use these preferences.");
+      toast.success("Settings saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể lưu cài đặt");
+      const message = err instanceof Error ? err.message : "Không thể lưu cài đặt";
+      setError(message);
+      toast.error(message);
     } finally {
       setSavingPreferences(false);
+    }
+  };
+
+  const handleSaveProviderKey = async (provider: "gemini" | "groq", clear = false) => {
+    setError(null);
+    setProviderKeyMessage(null);
+    setSavingProviderKey(provider);
+    try {
+      const res = await fetch("/api/provider-credentials", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(clear ? { provider, clear: true } : { provider, apiKey: providerKeyDrafts[provider] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not save API key");
+      setProviderKeyDrafts((current) => ({ ...current, [provider]: "" }));
+      setProviderCredentials((current) => ({ ...current, [provider]: data.configured }));
+      setProviderKeyMessage(`${provider === "groq" ? "Groq" : "Gemini"} key ${clear ? "removed" : "saved"}.`);
+      await fetchPreferences();
+      toast.success(`${provider === "groq" ? "Groq" : "Gemini"} API key ${clear ? "removed" : "saved"}`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not save API key";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSavingProviderKey(null);
     }
   };
 
@@ -257,8 +380,11 @@ export default function SettingsPage() {
         ? { ...item, maxArticlesPerRun: data.data.maxArticlesPerRun }
         : item));
       setSourceLimitMessages((current) => ({ ...current, [source.id]: value === null ? "Dùng giới hạn chung" : "Đã lưu" }));
+      toast.success(`Article limit saved for “${source.title}”`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể lưu giới hạn nguồn");
+      const message = err instanceof Error ? err.message : "Không thể lưu giới hạn nguồn";
+      setError(message);
+      toast.error(message);
     } finally {
       setSavingSourceLimit(null);
     }
@@ -284,8 +410,11 @@ export default function SettingsPage() {
       setNewTitle("");
       setNewCategory("");
       await fetchSources();
+      toast.success(`Source “${data.data.title}” added`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add source");
+      const message = err instanceof Error ? err.message : "Failed to add source";
+      setError(message);
+      toast.error(message);
     } finally {
       setAdding(false);
     }
@@ -312,8 +441,8 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-6 py-3 flex items-center justify-between">
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <SettingsIcon size={16} />
@@ -325,14 +454,15 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => router.push("/")}
-        >
-          Về trang đọc
-        </Button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle compact />
+          <Button variant="outline" size="sm" onClick={() => router.push("/")}>Về trang đọc</Button>
+        </div>
       </header>
+
+      <div className="shrink-0 border-b border-border px-4 py-2 sm:px-6">
+        <Breadcrumbs items={[{ label: "FastNews", href: "/" }, { label: "Settings" }]} loading={initialLoading} loadingText="Đang tải dữ liệu cài đặt…" />
+      </div>
 
       <div className="flex flex-1 overflow-hidden">
         <Tabs
@@ -395,6 +525,7 @@ export default function SettingsPage() {
             <ScrollArea className="h-full p-4">
             <TabsContent value="sources">
               <div className="space-y-4">
+                <ConnectorSourceManager />
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between py-2">
                     <CardTitle className="text-sm">Thêm nguồn RSS</CardTitle>
@@ -416,13 +547,11 @@ export default function SettingsPage() {
                           placeholder="Tên nguồn (tùy chọn)"
                           className="h-9 text-sm"
                         />
-                        <Input
-                          aria-label="Danh mục nguồn RSS"
-                          value={newCategory}
-                          onChange={(e) => setNewCategory(e.target.value)}
-                          placeholder="Danh mục (mặc định: Uncategorized)"
-                          className="h-9 text-sm"
-                        />
+                        <Button type="button" variant="outline" className="h-9 justify-start gap-2 text-sm font-normal" onClick={() => setFolderDialogOpen(true)}>
+                          <FolderOpen size={14} />
+                          {newCategory || "Chọn thư mục"}
+                          <Pencil size={12} className="ml-auto text-muted-foreground" />
+                        </Button>
                       </div>
                       <Button
                         type="submit"
@@ -433,6 +562,43 @@ export default function SettingsPage() {
                         Thêm nguồn
                       </Button>
                     </form>
+                    <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
+                      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>Chọn hoặc quản lý thư mục</DialogTitle>
+                          <DialogDescription>Chọn nơi lưu nguồn này, hoặc thêm thư mục và chỉnh tên, màu sắc.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-2">
+                          {folders.map((folder) => {
+                            const draft = folderDrafts[folder.id] || { name: folder.name, color: folder.color || "#6366f1" };
+                            return (
+                              <div key={folder.id} className={`rounded-lg border p-3 ${newCategory === folder.name ? "border-primary bg-primary/5" : "border-border"}`}>
+                                <button type="button" onClick={() => setNewCategory(folder.name)} className="flex w-full items-center gap-2 text-left text-sm font-medium">
+                                  <FolderOpen size={15} style={{ color: folder.color || "#6366f1" }} />
+                                  <span className="flex-1">{folder.name}</span>
+                                  <span className="text-xs text-muted-foreground">{folder._count?.sources ?? 0} nguồn</span>
+                                </button>
+                                <div className="mt-2 flex items-center gap-2 border-t border-border pt-2">
+                                  <Input aria-label={`Tên thư mục ${folder.name}`} value={draft.name} onChange={(event) => setFolderDrafts((current) => ({ ...current, [folder.id]: { ...draft, name: event.target.value } }))} className="h-8 text-xs" />
+                                  <input aria-label={`Màu thư mục ${folder.name}`} type="color" value={draft.color} onChange={(event) => setFolderDrafts((current) => ({ ...current, [folder.id]: { ...draft, color: event.target.value } }))} className="h-8 w-10 cursor-pointer rounded border border-input bg-background p-1" />
+                                  <Button type="button" size="sm" variant="outline" disabled={savingFolderId === folder.id} onClick={() => void handleSaveFolder(folder)}>
+                                    {savingFolderId === folder.id ? <Loader2 size={13} className="animate-spin" /> : "Lưu"}
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <form onSubmit={handleCreateFolder} className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                          <Input aria-label="Tên thư mục mới" value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Tên thư mục mới" className="h-9 min-w-36 flex-1" required />
+                          <input aria-label="Màu thư mục mới" type="color" value={newFolderColor} onChange={(event) => setNewFolderColor(event.target.value)} className="h-9 w-11 cursor-pointer rounded border border-input bg-background p-1" />
+                          <Button type="submit" disabled={savingFolder || !newFolderName.trim()}>
+                            {savingFolder ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Thêm
+                          </Button>
+                        </form>
+                        <Button type="button" onClick={() => setFolderDialogOpen(false)}>Xong</Button>
+                      </DialogContent>
+                    </Dialog>
                     {error && (
                       <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
                         {error}
@@ -452,14 +618,21 @@ export default function SettingsPage() {
                           Chưa có nguồn RSS. Thêm nguồn ở trên rồi chạy ingestion.
                         </div>
                       ) : (
-                        sources.map((s) => (
+                        folders.map((folder) => {
+                          const categorySources = sources.filter((source) => source.categoryId === folder.id);
+                          if (!categorySources.length) return null;
+                          return <section key={folder.id} aria-label={`${folder.name} sources`}>
+                            <h3 className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold" style={{ color: folder.color || undefined }}>
+                              <FolderOpen size={14} />{folder.name}<span className="text-muted-foreground">{categorySources.length}</span>
+                            </h3>
+                            {categorySources.map((s) => (
                           <div key={s.id} className="p-3 flex flex-wrap items-center justify-between gap-3 hover:bg-muted/50 transition-colors">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <h3 className="text-sm font-semibold text-foreground truncate">
                                   {s.title}
                                 </h3>
-                                <Badge variant="outline" className="text-[10px] px-2 py-0.5">
+                                <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-current/25" style={{ color: s.categoryColor || undefined }}>
                                   {s.category}
                                 </Badge>
                               </div>
@@ -481,7 +654,38 @@ export default function SettingsPage() {
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:flex-nowrap">
+                              <label className="sr-only" htmlFor={`source-category-${s.id}`}>Thư mục của {s.title}</label>
+                              <select
+                                id={`source-category-${s.id}`}
+                                value={s.categoryId}
+                                onChange={(event) => {
+                                  const categoryId = event.target.value;
+                                  const folder = folders.find((item) => item.id === categoryId);
+                                  if (!folder) return;
+                                  void (async () => {
+                                    setSavingSourceLimit(s.id);
+                                    setError(null);
+                                    try {
+                                      const res = await fetch(`/api/sources/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId }) });
+                                      const data = await res.json();
+                                      if (!res.ok) throw new Error(data.error || "Could not move source");
+                                      setSources((current) => current.map((item) => item.id === s.id ? { ...item, categoryId, category: folder.name, categoryColor: folder.color } : item));
+                                      setSourceLimitMessages((current) => ({ ...current, [s.id]: `Moved to ${folder.name}` }));
+                                      toast.success(`“${s.title}” moved to ${folder.name}`);
+                                    } catch (cause) {
+                                      const message = cause instanceof Error ? cause.message : "Could not move source";
+                                      setError(message);
+                                      toast.error(message);
+                                    } finally {
+                                      setSavingSourceLimit(null);
+                                    }
+                                  })();
+                                }}
+                                className="h-8 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background px-2 text-xs sm:max-w-36 sm:flex-none"
+                              >
+                                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+                              </select>
                               <label className="sr-only" htmlFor={`source-limit-${s.id}`}>Giới hạn bài viết cho {s.title}</label>
                               <Input
                                 id={`source-limit-${s.id}`}
@@ -526,7 +730,9 @@ export default function SettingsPage() {
                               {sourceLimitMessages[s.id] ? ` · ${sourceLimitMessages[s.id]}` : ""}
                             </div>
                           </div>
-                        ))
+                            ))}
+                          </section>;
+                        })
                       )}
                     </div>
                   </CardContent>
@@ -542,6 +748,9 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-muted-foreground" aria-live="polite">
                         Cập nhật thành công gần nhất: {formatRelative(lastSuccessfulUpdate ? new Date(lastSuccessfulUpdate) : null)}
                       </p>
+                      <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                        Ingestion chỉ tải RSS và không gọi AI. Trạng thái partial nghĩa là một số nguồn RSS lỗi; lỗi tạo AI summary được hiển thị riêng trên từng bài viết.
+                      </p>
                     </div>
                   </CardHeader>
                   <CardContent className="p-4">
@@ -555,8 +764,8 @@ export default function SettingsPage() {
                           <div key={r.id} className="p-3 flex items-center justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <Badge variant="secondary" className={statusColor(r.status)} text-xs px-2 py-1>
-                                  {r.status}
+                                <Badge variant="secondary" className={`px-2 py-1 text-xs ${statusColor(r.status)}`}>
+                                  {r.status === "partial" ? "Partial · một số nguồn lỗi" : r.status === "completed" ? "Completed" : r.status === "failed" ? "Failed" : r.status}
                                 </Badge>
                                 <span className="ml-auto text-[11px] text-muted-foreground">
                                   {formatRelative(r.completedAt || r.startedAt)}
@@ -571,7 +780,7 @@ export default function SettingsPage() {
                                 )}
                               </div>
                               {r.errorMessage && (
-                                <p className="mt-1 text-[10px] text-destructive/70 truncate">
+                                <p className="mt-1 text-[10px] text-destructive/70" title={r.errorMessage}>
                                   {r.errorMessage}
                                 </p>
                               )}
@@ -588,7 +797,7 @@ export default function SettingsPage() {
               <Card className="mx-auto max-w-3xl">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-sm"><Cpu size={16} className="text-primary" />AI Provider</CardTitle>
-                  <p className="text-xs text-muted-foreground">Choose the provider and model for article summaries and Daily Briefing. RSS ingestion stores articles without calling AI.</p>
+                  <p className="text-xs text-muted-foreground">Choose the provider and model here, then save. Your choice is stored in Supabase for your account, so you do not need to edit .env. Provider credentials stay on the server. RSS ingestion stores articles without calling AI.</p>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSavePreferences} className="space-y-5">
@@ -606,6 +815,32 @@ export default function SettingsPage() {
                         </button>
                       ))}
                     </div>
+                    {preferences.aiProvider !== "mock" && (
+                      <section className="space-y-3 rounded-xl border border-border p-4" aria-labelledby="provider-key-heading">
+                        <div>
+                          <h3 id="provider-key-heading" className="flex items-center gap-2 text-sm font-semibold"><KeyRound size={15} />{preferences.aiProvider === "groq" ? "Groq" : "Gemini"} API key</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">Enter your key here. It is encrypted on the server and never shown again. Leave blank until you are ready to save a new key.</p>
+                        </div>
+                        <label className="sr-only" htmlFor="provider-api-key">{preferences.aiProvider} API key</label>
+                        <Input
+                          id="provider-api-key"
+                          type="password"
+                          autoComplete="new-password"
+                          value={providerKeyDrafts[selectedCredentialProvider]}
+                          onChange={(event) => setProviderKeyDrafts((current) => ({ ...current, [selectedCredentialProvider]: event.target.value }))}
+                          placeholder={providerCredentials[selectedCredentialProvider] ? "Key saved · enter a new key to replace" : "Paste your API key"}
+                          className="font-mono"
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button type="button" variant="outline" disabled={savingProviderKey === selectedCredentialProvider || providerKeyDrafts[selectedCredentialProvider].trim().length < 8} onClick={() => void handleSaveProviderKey(selectedCredentialProvider)}>
+                            {savingProviderKey === selectedCredentialProvider && <Loader2 size={13} className="mr-2 animate-spin" />}Save API key
+                          </Button>
+                          {providerCredentials[selectedCredentialProvider] && <Button type="button" variant="ghost" disabled={savingProviderKey === selectedCredentialProvider} onClick={() => void handleSaveProviderKey(selectedCredentialProvider, true)}>Remove saved key</Button>}
+                          <span className="text-xs text-muted-foreground">{providerCredentials[selectedCredentialProvider] ? "A key is configured" : "No personal key saved"}</span>
+                        </div>
+                        {providerKeyMessage && <p role="status" className="text-sm text-green-700 dark:text-green-400">{providerKeyMessage}</p>}
+                      </section>
+                    )}
                     <div className="space-y-2">
                       <label htmlFor="ai-model" className="text-sm font-medium">Model</label>
                       <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
@@ -653,7 +888,7 @@ export default function SettingsPage() {
                   <div>
                     <CardTitle className="text-sm">Tuỳ chọn đọc và ingestion</CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Các giá trị này được lưu trong Supabase và áp dụng cho những lần worker tiếp theo.
+                    Thay đổi và lưu tại đây — các giá trị được lưu trong Supabase và áp dụng cho worker tiếp theo. Không cần chỉnh sửa file .env.
                   </p>
                   </div>
                   <Button type="button" variant="outline" size="sm" onClick={() => void handleRefreshPreferences()} disabled={refreshingPreferences}>

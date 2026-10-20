@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { summarizeArticle, type AIProviderSelection } from "@/lib/aiProvider";
 import { resolveAIModel } from "@/lib/preferences";
+import { authenticatedUser } from "@/lib/api-auth";
+import { getUserProviderKeys } from "@/lib/providerCredentials";
 
 function selectionForPreference(
   preference: { aiProvider: string; aiModel: string } | null
@@ -23,27 +25,30 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const { id } = await params;
     const article = await prisma.article.findUnique({
-      where: { id },
+      where: { id, source: { userId } },
       select: { id: true, title: true, excerpt: true, summary: true, aiSummary: true },
     });
     if (!article) return NextResponse.json({ error: "Article not found" }, { status: 404 });
     if (article.aiSummary) return NextResponse.json({ data: { summary: article.aiSummary, cached: true } });
 
-    const preference = await prisma.userPreference.findFirst({
+    const preference = await prisma.userPreference.findUnique({ where: { userId },
       select: { language: true, aiProvider: true, aiModel: true },
     });
+    const apiKeys = await getUserProviderKeys(userId);
     const outcome = await summarizeArticle(
       article.title,
       article.excerpt || article.summary || null,
       preference?.language || process.env.DEFAULT_LANGUAGE || "vi",
-      selectionForPreference(preference)
+      { ...selectionForPreference(preference), apiKeys }
     );
     if (!outcome) return NextResponse.json({ error: "AI providers could not summarize this article" }, { status: 502 });
 
     const saved = await prisma.article.updateMany({
-      where: { id: article.id, aiSummary: null },
+      where: { id: article.id, aiSummary: null, source: { userId } },
       data: {
         aiSummary: outcome.result.summary,
         relevanceScore: outcome.result.relevanceScore,
@@ -53,7 +58,7 @@ export async function POST(
       },
     });
     if (!saved.count) {
-      const latest = await prisma.article.findUnique({ where: { id }, select: { aiSummary: true } });
+      const latest = await prisma.article.findFirst({ where: { id, source: { userId } }, select: { aiSummary: true } });
       return NextResponse.json({ data: { summary: latest?.aiSummary ?? outcome.result.summary, cached: true } });
     }
     return NextResponse.json({

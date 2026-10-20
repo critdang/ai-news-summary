@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { resolveAIModel, validatePreferencesInput } from "@/lib/preferences";
 import { checkProviderAvailability } from "@/lib/providerAvailability";
+import { authenticatedUser } from "@/lib/api-auth";
+import { getUserProviderKeys } from "@/lib/providerCredentials";
 
 const defaultProvider = process.env.AI_PROVIDER === "gemini" ? "gemini" : process.env.AI_PROVIDER === "mock" ? "mock" : "groq";
 
@@ -16,12 +18,17 @@ const DEFAULT_PREFERENCES = {
 
 export async function GET(): Promise<NextResponse> {
   try {
-    const [saved, geminiStatus, groqStatus] = await Promise.all([
-      prisma.userPreference.findFirst({
-        select: { language: true, retentionDays: true, maxArticlesPerSource: true, ingestionIntervalHours: true, aiProvider: true, aiModel: true },
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
+    const [saved, keys] = await Promise.all([
+      prisma.userPreference.findUnique({ where: { userId },
+        select: { language: true, retentionDays: true, maxArticlesPerSource: true, ingestionIntervalHours: true, aiProvider: true, aiModel: true, geminiApiKeyEncrypted: true, groqApiKeyEncrypted: true },
       }),
-      checkProviderAvailability("gemini", process.env.GEMINI_API_KEY),
-      checkProviderAvailability("groq", process.env.GROQ_API_KEY),
+      getUserProviderKeys(userId),
+    ]);
+    const [geminiStatus, groqStatus] = await Promise.all([
+      checkProviderAvailability("gemini", keys.gemini),
+      checkProviderAvailability("groq", keys.groq),
     ]);
     return NextResponse.json({
       data: saved
@@ -44,6 +51,7 @@ export async function GET(): Promise<NextResponse> {
         groq: groqStatus,
         mock: { state: "available", models: ["mock"] },
       },
+      providerCredentials: { gemini: Boolean(saved?.geminiApiKeyEncrypted), groq: Boolean(saved?.groqApiKeyEncrypted) },
     });
   } catch (error) {
     console.error("Failed to fetch preferences:", error);
@@ -52,6 +60,8 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function PUT(req: NextRequest): Promise<NextResponse> {
+  const { userId, response } = await authenticatedUser();
+  if (!userId) return response!;
   let body: unknown;
   try {
     body = await req.json();
@@ -65,7 +75,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const explicitLimits = await prisma.source.aggregate({
+    const explicitLimits = await prisma.source.aggregate({ where: { userId },
       _sum: { maxArticlesPerRun: true },
     });
     const allocated = explicitLimits._sum.maxArticlesPerRun ?? 0;
@@ -76,7 +86,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const current = await prisma.userPreference.findFirst({ select: { id: true, aiProvider: true, aiModel: true } });
+    const current = await prisma.userPreference.findUnique({ where: { userId }, select: { id: true, aiProvider: true, aiModel: true } });
     const { maxArticlesPerRun, ...otherData } = validation.value;
     const aiProvider = validation.value.aiProvider ?? current?.aiProvider ?? DEFAULT_PREFERENCES.aiProvider;
     const normalizedProvider = aiProvider === "gemini" || aiProvider === "mock" ? aiProvider : "groq";
@@ -89,7 +99,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     };
     const saved = current
       ? await prisma.userPreference.update({ where: { id: current.id }, data })
-      : await prisma.userPreference.create({ data });
+      : await prisma.userPreference.create({ data: { ...data, userId } });
     return NextResponse.json({
       data: {
         language: saved.language,

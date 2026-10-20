@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import { Providers } from "./providers";
 import "./globals.css";
 
+const serviceWorkerScript = process.env.NODE_ENV === "production"
+  ? `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js')})}`
+  : `if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(registrations){registrations.forEach(function(registration){registration.unregister()})})}`;
+
 export const metadata: Metadata = {
-  title: "AI News Summary",
+  title: "FastNews",
   description:
     "A personal reader for AI, software engineering, data science, and maker news.",
 };
@@ -24,7 +28,7 @@ export default function RootLayout({
         />
         <script
           dangerouslySetInnerHTML={{
-            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js')})}`,
+            __html: serviceWorkerScript,
           }}
         />
       </head>

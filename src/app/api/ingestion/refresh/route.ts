@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { runIngestion } from "../../../../../scripts/ingest";
+import { authenticatedUser } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -16,6 +17,8 @@ function originIsSameSite(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const { userId, response } = await authenticatedUser();
+  if (!userId) return response!;
   if (!originIsSameSite(request)) {
     return NextResponse.json({ error: "Request must come from this site" }, { status: 403 });
   }
@@ -30,7 +33,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   recentRequests.set(key, now);
   after(async () => {
     try {
-      await runIngestion({ scheduled: false });
+      await runIngestion({ scheduled: false, userId });
     } catch (error) {
       console.error("Manual ingestion failed:", error);
     }
@@ -43,6 +46,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const { userId, response } = await authenticatedUser();
+  if (!userId) return response!;
   const since = request.nextUrl.searchParams.get("since");
   const requestedAt = since ? Date.parse(since) : Number.NaN;
   if (!Number.isFinite(requestedAt) || Math.abs(Date.now() - requestedAt) > 15 * 60_000) {
@@ -51,7 +56,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const { prisma } = await import("@/lib/prisma");
   const run = await prisma.ingestionRun.findFirst({
-    where: { scheduled: false, startedAt: { gte: new Date(requestedAt) } },
+    where: { scheduled: false, startedAt: { gte: new Date(requestedAt) }, userId },
     orderBy: { startedAt: "asc" },
     select: { status: true, completedAt: true, errorMessage: true },
   });

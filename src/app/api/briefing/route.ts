@@ -10,6 +10,8 @@ import { allocateSourceArticleLimits } from "@/lib/sourceLimits";
 import { scrapeArticle } from "@/lib/rss/scraper";
 import { validateFeedUrl } from "@/lib/utils/url-validator";
 import * as cheerio from "cheerio";
+import { authenticatedUser } from "@/lib/api-auth";
+import { getUserProviderKeys } from "@/lib/providerCredentials";
 
 export const maxDuration = 60;
 
@@ -26,7 +28,7 @@ type BriefingSource = {
   category: { name: string };
 };
 
-function providerSelection(preference: { aiProvider: string; aiModel: string } | null): AIProviderSelection {
+async function providerSelection(userId: string, preference: { aiProvider: string; aiModel: string } | null): Promise<AIProviderSelection> {
   const environmentProvider = process.env.AI_PROVIDER === "gemini" || process.env.AI_PROVIDER === "mock"
     ? process.env.AI_PROVIDER
     : "groq";
@@ -36,6 +38,7 @@ function providerSelection(preference: { aiProvider: string; aiModel: string } |
   return {
     provider,
     model: resolveAIModel(provider, preference?.aiModel),
+    apiKeys: await getUserProviderKeys(userId),
   };
 }
 
@@ -131,6 +134,8 @@ async function fetchSelectedSources(sources: BriefingSource[], totalLimit: numbe
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const { userId, response } = await authenticatedUser();
+  if (!userId) return response!;
   let body: unknown;
   try {
     body = await request.json();
@@ -153,13 +158,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     try {
       const [preferences, scraped] = await Promise.all([
-        prisma.userPreference.findFirst({ select: { language: true, aiProvider: true, aiModel: true } }),
+        prisma.userPreference.findUnique({ where: { userId }, select: { language: true, aiProvider: true, aiModel: true } }),
         scrapeArticle(requestedUrl),
       ]);
       if (!scraped) {
         return NextResponse.json({ error: "Could not extract readable article content from this URL" }, { status: 422 });
       }
-      const provider = providerSelection(preferences);
+      const provider = await providerSelection(userId, preferences);
       const articleText = scraped.content
         ? cheerio.load(scraped.content).text().replace(/\s+/g, " ").trim().slice(0, 12_000)
         : scraped.excerpt;
@@ -208,9 +213,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const [preferences, configuredSources] = await Promise.all([
-      prisma.userPreference.findFirst({ select: { language: true, aiProvider: true, aiModel: true, maxArticlesPerSource: true } }),
+      prisma.userPreference.findUnique({ where: { userId }, select: { language: true, aiProvider: true, aiModel: true, maxArticlesPerSource: true } }),
       prisma.source.findMany({
-        where: categories.length ? { category: { name: { in: categories as string[] } } } : undefined,
+        where: { userId, ...(categories.length ? { category: { name: { in: categories as string[] } } } : {}) },
         include: { category: { select: { name: true } } },
         orderBy: [{ category: { name: "asc" } }, { title: "asc" }],
       }),
@@ -223,6 +228,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
     const articles = await prisma.article.findMany({
       where: {
+        source: { userId },
         publishedAt: { gte: cutoff },
         ...(categories.length ? { source: { category: { name: { in: categories as string[] } } } } : {}),
       },
@@ -259,7 +265,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       maxInputChars: 20_000,
       maxExcerptChars: 1_200,
     });
-    const provider = providerSelection(preferences);
+    const provider = await providerSelection(userId, preferences);
     const batches = prepared.batches.slice(0, 4);
     const responses = await mapWithConcurrency(batches, 2, (batch) =>
       summarizeBatch(batch, preferences?.language || process.env.DEFAULT_LANGUAGE || "vi", provider)

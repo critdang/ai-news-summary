@@ -1,7 +1,7 @@
 /**
  * src/app/api/articles/route.ts
  *
- * GET /api/articles — list articles with pagination, search, category/bookmark
+ * GET /api/articles — list articles with pagination, search, source/category/bookmark
  * filters and sorting. Single-user: no authentication required.
  *
  * Input validation: page/limit are bounded; search and category are sanitized.
@@ -9,12 +9,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { authenticatedUser } from "@/lib/api-auth";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const { searchParams } = new URL(req.url);
 
     const page = Math.max(
@@ -29,6 +32,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const search = searchParams.get("q")?.trim() || "";
     const category = searchParams.get("category")?.trim() || "";
+    const sourceId = searchParams.get("sourceId")?.trim() || "";
     const bookmarked = searchParams.get("bookmarked");
     const status = searchParams.get("status")?.trim() || ""; // completed|failed|pending
     const sort = searchParams.get("sort") || "publishedAt"; // publishedAt|createdAt|relevanceScore
@@ -36,7 +40,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Build where clause.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: any = { source: { userId } };
 
     if (search) {
       where.OR = [
@@ -47,8 +51,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ];
     }
 
-    if (category) {
-      where.source = { category: { name: category } };
+    if (category || sourceId) {
+      where.source = { userId };
+      if (category) {
+        where.source.category = {
+          name: category.toLowerCase() === "uncategorized"
+            ? { in: ["", "Uncategorized"] }
+            : category,
+        };
+      }
+      if (sourceId) where.source.id = sourceId;
     }
 
     if (bookmarked === "1") {
@@ -75,7 +87,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               id: true,
               title: true,
               url: true,
-              category: { select: { name: true } },
+              category: { select: { name: true, color: true } },
             },
           },
         },
@@ -100,7 +112,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       publishedAt: a.publishedAt,
       firstSeenAt: a.firstSeenAt,
       source: a.source
-        ? { ...a.source, category: a.source.category.name }
+        ? { ...a.source, category: a.source.category.name, categoryColor: a.source.category.color }
         : null,
       tags: a.tags,
       bookmarked: a.bookmarked,

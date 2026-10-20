@@ -2,10 +2,6 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = [
-  "/api",
-  "/settings",
-  "/api/auth",
-  "/api/setup",
   "/api/telegram",
   "/api/cron",
   "/api/internal",
@@ -35,13 +31,20 @@ function isValidOrigin(req: NextRequest): boolean {
   return true;
 }
 
-export function middleware(req: NextRequest): NextResponse {
+export function proxy(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
+
+  const isPublicPage = pathname === "/login" || pathname === "/register" || pathname === "/setup" || pathname.startsWith("/_next") || pathname === "/favicon.ico";
+  const hasSessionCookie = req.cookies.has("authjs.session-token") || req.cookies.has("__Secure-authjs.session-token");
+  if (!isPublicPage && !pathname.startsWith("/api/") && !hasSessionCookie) {
+    return NextResponse.redirect(new URL("/login", req.url));
+  }
 
   // CSRF protection for state-changing methods.
   const method = req.method;
   if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    const isCsrfExempt = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+    const isAuthJsRoute = pathname.startsWith("/api/auth/") && pathname !== "/api/auth/register";
+    const isCsrfExempt = isAuthJsRoute || PUBLIC_PATHS.some((p) => pathname.startsWith(p));
     if (!isCsrfExempt && !isValidOrigin(req)) {
       return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 });
     }

@@ -18,7 +18,7 @@ import {
   useMemo,
   memo,
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Bookmark,
@@ -31,10 +31,16 @@ import {
   RefreshCw,
   Loader2,
   ChevronLeft,
+  ChevronRight,
   Sparkles,
   BookOpen,
   Newspaper,
   Settings as SettingsIcon,
+  FolderOpen,
+  Github,
+  Compass,
+  ChevronDown,
+  FileText,
 } from "lucide-react";
 import { cn, formatPublishedDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -46,8 +52,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useKeyboardShortcuts } from "@/lib/hooks/useKeyboardShortcuts";
 import { nextArticleIndex } from "@/lib/readerNavigation";
+import { groupSourcesByCategory, type CategoryGroup } from "@/lib/readerCategories";
 import { rssPlainText, sanitizeRssHtml } from "@/lib/rss/displayContent";
 import BriefingPage from "@/app/briefing/page";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
+import { toast } from "sonner";
 
 type Article = {
   id: string;
@@ -62,7 +71,7 @@ type Article = {
   processingStatus: string;
   publishedAt: Date | null;
   firstSeenAt: Date;
-  source: { id: string; title: string; url: string; category: string } | null;
+  source: { id: string; title: string; url: string; category: string; categoryColor: string | null } | null;
   tags: string[];
   bookmarked: boolean;
   bookmarkNote: string | null;
@@ -75,13 +84,22 @@ type Source = {
   title: string;
   url: string;
   category: string;
+  categoryColor?: string | null;
   _count: { articles: number };
   health: { consecutiveFailures: number; lastSuccess: Date | null } | null;
 };
 
-type CategoryOption = { value: string; label: string; count: number };
+type CategoryOption = CategoryGroup<Source>;
 
 const PAGE_SIZE = 20;
+
+function folderColor(name: string): string {
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) | 0;
+  }
+  return `hsl(${Math.abs(hash) % 360} 58% 45%)`;
+}
 
 function ArticleReaderPanel({
   article,
@@ -94,6 +112,27 @@ function ArticleReaderPanel({
   summaryError: string | null;
   onSummarize: () => void;
 }) {
+  const [fullText, setFullText] = useState<string | null>(null);
+  const [loadingFullText, setLoadingFullText] = useState(false);
+  const loadFullText = async () => {
+    if (!article || loadingFullText) return;
+    setLoadingFullText(true);
+    try {
+      const response = await fetch(`/api/articles/${article.id}/content`, { cache: "no-store" });
+      const body = await response.json() as { data?: { content?: string | null }; error?: string };
+      if (!response.ok) throw new Error(body.error || "Could not load full article");
+      if (!body.data?.content) {
+        toast.error("This publisher did not provide readable full text. Open the original article instead.");
+        return;
+      }
+      setFullText(body.data.content);
+      toast.success("Full article loaded");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not load full article");
+    } finally {
+      setLoadingFullText(false);
+    }
+  };
   if (!article) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8 text-center">
@@ -110,7 +149,9 @@ function ArticleReaderPanel({
         <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground"><BookOpen size={11} />Reading</span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Badge variant="outline">{article.source?.category || "Other"}</Badge>
+            <Badge variant="outline" className="gap-1 border-current/25" style={{ color: article.source?.categoryColor || folderColor(article.source?.category || "Other") }}>
+              <FolderOpen size={11} />{article.source?.category || "Other"}
+            </Badge>
         <span className="inline-flex items-center gap-1" title={`Published: ${formatDateTime(article.publishedAt)}`}><Clock size={11} />Published {formatDateTime(article.publishedAt)}</span>
         <span className="inline-flex items-center gap-1" title={`Received: ${formatDateTime(article.firstSeenAt)}`}><Rss size={11} />Received {formatDateTime(article.firstSeenAt)}</span>
         {article.relevanceScore != null && <span>Relevance {article.relevanceScore}/10</span>}
@@ -121,7 +162,17 @@ function ArticleReaderPanel({
       </Button>
       {summaryError && <p role="alert" className="text-xs text-destructive">{summaryError}</p>}
       {article.aiSummary && <section className="rounded-xl border border-primary/30 bg-primary/5 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles size={14} />AI Summary</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{article.aiSummary}</p>{article.relevanceExplanation && <p className="mt-3 border-t border-primary/10 pt-3 text-xs text-muted-foreground">{article.relevanceExplanation}</p>}</section>}
-      {(article.summary || article.excerpt) && <section><h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Newspaper size={13} />RSS article content</h2><div className="rss-content text-sm leading-relaxed text-foreground/85 [&_img]:my-3 [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg [&_p]:my-3 [&_a]:text-primary [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeRssHtml(article.excerpt || article.summary) }} /></section>}
+      {(article.summary || article.excerpt) && <section><h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Newspaper size={13} />RSS preview</h2><div className="rss-content text-sm leading-relaxed text-foreground/85 [&_img]:my-3 [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg [&_p]:my-3 [&_a]:text-primary [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeRssHtml(article.excerpt || article.summary) }} /></section>}
+      <section className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">Some GitHub and RSS sources publish only a short preview. Load the publisher page text when available.</p>
+          <Button size="sm" variant="outline" onClick={() => void loadFullText()} disabled={loadingFullText} className="shrink-0">
+            {loadingFullText ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <FileText size={14} className="mr-1.5" />}
+            {loadingFullText ? "Loading article…" : fullText ? "Reload full article" : "Load full article"}
+          </Button>
+        </div>
+        {fullText && <div><h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Full article</h2><div className="rss-content max-w-full overflow-x-auto text-sm leading-relaxed text-foreground/85 [&_img]:my-3 [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg [&_p]:my-3 [&_a]:text-primary [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeRssHtml(fullText) }} /></div>}
+      </section>
       <a href={article.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted"><ExternalLink size={13} />Read full article at {article.source?.title || "source"}</a>
     </article>
   );
@@ -169,8 +220,8 @@ const ArticleItem = memo(function ArticleItem({
         }
       }}
       className={cn(
-        "w-full flex items-start gap-3 rounded-xl border border-transparent p-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        isSelected ? "bg-primary/5 border-primary/30" : "border-l-2 border-l-transparent",
+        "w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/30 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isSelected ? "bg-primary/5 border-primary/50" : "border-l-2 border-l-border",
         article.bookmarked && "border-l-primary"
       )}
       aria-pressed={isSelected}
@@ -178,7 +229,8 @@ const ArticleItem = memo(function ArticleItem({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
           {article.source?.category && (
-            <Badge variant="outline" className="px-1.5 py-0.5">
+              <Badge variant="outline" className="gap-1 px-1.5 py-0.5 border-current/25" style={{ color: article.source.categoryColor || folderColor(article.source.category) }}>
+                <FolderOpen size={10} style={{ color: article.source.categoryColor || folderColor(article.source.category) }} />
               {article.source.category}
             </Badge>
           )}
@@ -235,8 +287,10 @@ ArticleItem.displayName = "ArticleItem";
 
 export default function ReaderPage() {
   const [activeView, setActiveView] = useState<"feeds" | "briefing">("feeds");
+  const [discoverOpen, setDiscoverOpen] = useState(true);
   const [articles, setArticles] = useState<Article[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -244,6 +298,7 @@ export default function ReaderPage() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [sourceFilterId, setSourceFilterId] = useState("");
   const [bookmarkFilter, setBookmarkFilter] = useState("all"); // all | bookmarked | unbookmarked
   const [statusFilter, setStatusFilter] = useState("");
   const [sort, setSort] = useState("publishedAt:desc");
@@ -252,22 +307,12 @@ export default function ReaderPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const requestIdRef = useRef(0);
 
-  // Build category options from sources.
-  const categories = useMemo<CategoryOption[]>(() => {
-    const counts: Record<string, number> = {};
-    for (const s of sources) {
-      counts[s.category] = (counts[s.category] || 0) + s._count.articles;
-    }
-    return Object.entries(counts).map(([value, count]) => ({
-      value,
-      label: value,
-      count,
-    }));
-  }, [sources]);
+  const categories = useMemo<CategoryOption[]>(() => groupSourcesByCategory(sources), [sources]);
 
   const fetchArticles = useCallback(
     async (p: number) => {
@@ -281,6 +326,7 @@ export default function ReaderPage() {
         });
         if (search) params.set("q", search);
         if (categoryFilter) params.set("category", categoryFilter);
+        if (sourceFilterId) params.set("sourceId", sourceFilterId);
         if (bookmarkFilter === "bookmarked") params.set("bookmarked", "1");
         else if (bookmarkFilter === "unbookmarked") params.set("bookmarked", "0");
         if (statusFilter) params.set("status", statusFilter);
@@ -302,7 +348,7 @@ export default function ReaderPage() {
         if (requestIdRef.current === reqId) setLoading(false);
       }
     },
-    [search, categoryFilter, bookmarkFilter, statusFilter, sort]
+    [search, categoryFilter, sourceFilterId, bookmarkFilter, statusFilter, sort]
   );
 
   const fetchSources = useCallback(async () => {
@@ -317,20 +363,35 @@ export default function ReaderPage() {
   }, []);
 
   useEffect(() => {
-    // Both helpers begin asynchronous requests and update state after awaiting them.
+    // Source data is independent of the article query.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSources();
-    fetchArticles(1);
-  }, [fetchSources, fetchArticles]);
+  }, [fetchSources]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchArticles(1);
-  }, [search, categoryFilter, bookmarkFilter, statusFilter, sort, fetchArticles]);
+    fetchArticles(page);
+  }, [page, search, categoryFilter, sourceFilterId, bookmarkFilter, statusFilter, sort, fetchArticles]);
 
   const handleCategoryChange = useCallback((value: string) => {
     setCategoryFilter(value);
+    setSourceFilterId("");
     setPage(1);
+  }, []);
+
+  const handleSourceChange = useCallback((source: Source) => {
+    setCategoryFilter("");
+    setSourceFilterId(source.id);
+    setPage(1);
+  }, []);
+
+  const toggleCategoryExpanded = useCallback((category: string) => {
+    setExpandedCategories((current) => {
+      const next = new Set(current);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
   }, []);
 
   const handleStatusChange = useCallback((value: string) => {
@@ -368,9 +429,11 @@ export default function ReaderPage() {
         body: JSON.stringify({ articleId: id }),
       });
       if (!response.ok) throw new Error("Failed to update bookmark");
+      toast.success("Bookmark updated");
     } catch {
       const original = articles.find((article) => article.id === id)?.bookmarked ?? false;
       rollback(original);
+      toast.error("Could not update bookmark");
     }
   }, [articles]);
 
@@ -466,15 +529,15 @@ export default function ReaderPage() {
   const canGoForward = page < totalPages;
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+      <div className="flex h-dvh flex-col overflow-hidden">
       {/* Header */}
       <header className="flex-shrink-0 border-b border-border bg-background/50 backdrop-blur px-3 sm:px-6 py-3 flex items-center justify-between gap-2">
-        <Link href="/" aria-label="Go to AI News Summary homepage" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Link href="/" aria-label="Go to FastNews homepage" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Rss size={16} />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-foreground leading-none">AI News Summary</h1>
+            <h1 className="text-sm font-semibold text-foreground leading-none">FastNews</h1>
             <p className="hidden sm:block text-[11px] text-muted-foreground leading-none">
               Software Engineering · AI/LLM · Data Science · 3D Printing · Maker
             </p>
@@ -482,6 +545,15 @@ export default function ReaderPage() {
         </Link>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <ThemeToggle compact />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/discover/projects")}
+            aria-label="Discover"
+            className="h-7 px-2"
+          >
+            <Compass size={13} className="sm:mr-1.5" /><span className="hidden sm:inline">Discover</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -525,76 +597,97 @@ export default function ReaderPage() {
           <nav aria-label="Main navigation" className="space-y-1 border-b border-border p-3">
             <button aria-current={activeView === "feeds" ? "page" : undefined} onClick={() => setActiveView("feeds")} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", activeView === "feeds" ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Rss size={15} />All Feeds</button>
             <button aria-current={activeView === "briefing" ? "page" : undefined} onClick={() => setActiveView("briefing")} className={cn("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm", activeView === "briefing" ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Sparkles size={15} />Daily Briefing</button>
+            <div>
+              <div className="flex items-center">
+                <Link href="/discover/projects" className={cn("flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm", pathname.startsWith("/discover") ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Compass size={15} />Discover</Link>
+                <button type="button" aria-label={discoverOpen ? "Collapse Discover" : "Expand Discover"} aria-expanded={discoverOpen} onClick={() => setDiscoverOpen((open) => !open)} className="rounded-md p-2 text-muted-foreground hover:bg-muted"><ChevronDown size={14} className={cn("transition-transform", !discoverOpen && "-rotate-90")} /></button>
+              </div>
+              {discoverOpen && <div className="ml-4 space-y-0.5 border-l border-border pl-2">
+                <Link href="/discover/projects" aria-current={pathname === "/discover/projects" ? "page" : undefined} className={cn("flex items-center gap-2 rounded-md px-3 py-1.5 text-xs", pathname === "/discover/projects" ? "font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><Github size={13} />Projects</Link>
+                <Link href="/discover/connectors" aria-current={pathname === "/discover/connectors" ? "page" : undefined} className={cn("flex items-center gap-2 rounded-md px-3 py-1.5 text-xs", pathname === "/discover/connectors" ? "font-semibold text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}><SettingsIcon size={13} />Connectors</Link>
+              </div>}
+            </div>
             <button onClick={() => router.push("/settings")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><SettingsIcon size={15} />AI Settings</button>
           </nav>
-          <div className="p-3 space-y-1">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1">
             <h2 className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1">
               Danh mục
             </h2>
             <div className="space-y-0.5">
               <button
                 onClick={() => handleCategoryChange("")}
-                aria-pressed={!categoryFilter}
+                aria-pressed={!categoryFilter && !sourceFilterId}
                 className={cn(
                   "w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                  !categoryFilter ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                  !categoryFilter && !sourceFilterId ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
                 )}
               >
                 Tất cả
               </button>
               {categories.map((c) => (
-                <button
-                  key={c.value}
-                  onClick={() => handleCategoryChange(c.value)}
-                  aria-pressed={categoryFilter === c.value}
-                  className={cn(
-                    "w-full text-left rounded-lg px-2.5 py-1.5 text-sm transition-colors",
-                    categoryFilter === c.value
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-muted"
+                <div key={c.value}>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => handleCategoryChange(c.value)}
+                      aria-pressed={categoryFilter === c.value && !sourceFilterId}
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors",
+                        categoryFilter === c.value && !sourceFilterId
+                          ? "bg-primary/10 font-medium text-primary"
+                          : "text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      <FolderOpen size={13} className="shrink-0" style={{ color: c.color || folderColor(c.label) }} />
+                      <span className="min-w-0 flex-1 truncate" style={{ color: c.color || folderColor(c.label) }}>{c.label}</span>
+                      <span className="shrink-0 text-[11px]">{c.count}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleCategoryExpanded(c.value)}
+                      aria-label={`${expandedCategories.has(c.value) ? "Hide" : "Show"} sources in ${c.label}`}
+                      aria-expanded={expandedCategories.has(c.value)}
+                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <ChevronRight size={14} className={cn("transition-transform", expandedCategories.has(c.value) && "rotate-90")} />
+                    </button>
+                  </div>
+                  {expandedCategories.has(c.value) && (
+                    <div className="ml-4 space-y-0.5 border-l border-border/70 py-0.5 pl-2">
+                      {c.sources.map((source) => (
+                        <button
+                          key={source.id}
+                          onClick={() => handleSourceChange(source)}
+                          aria-pressed={sourceFilterId === source.id}
+                          title={source.title}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors",
+                            sourceFilterId === source.id
+                              ? "bg-primary/10 font-medium text-primary"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                        >
+                          <Rss size={11} className="shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{source.title}</span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground/60">{source._count.articles}</span>
+                        </button>
+                      ))}
+                    </div>
                   )}
-                >
-                  {c.label} <span className="ml-auto text-[11px]">{c.count}</span>
-                </button>
+                </div>
               ))}
+              {sources.length === 0 && (
+                <p className="px-2 py-1 text-[11px] text-muted-foreground/60">Chưa có nguồn</p>
+              )}
             </div>
-          </div>
-          <div className="p-3 space-y-1 border-t border-border mt-auto">
-            <h2 className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold px-2 mb-1">
-              Nguồn
-            </h2>
-            <ScrollArea className="h-48">
-              <div className="space-y-0.5">
-                {sources.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => handleCategoryChange(s.category)}
-                    className={cn(
-                      "w-full text-left rounded-lg px-2.5 py-1 text-sm transition-colors hover:bg-muted",
-                      categoryFilter === s.category
-                        ? "bg-primary/10 text-primary border-l-2 border-l-primary"
-                        : "text-muted-foreground"
-                    )}
-                  >
-                    <span className="truncate inline-block max-w-[150px]">{s.title}</span>
-                    <span className="ml-auto text-[10px] text-muted-foreground/60">
-                      {s._count.articles}
-                    </span>
-                  </button>
-                ))}
-                {sources.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground/60 px-2 py-1">
-                    Chưa có nguồn
-                  </p>
-                )}
-              </div>
-            </ScrollArea>
           </div>
         </aside>
 
         {/* Main content */}
         <main className="flex flex-1 flex-col min-w-0">
           {activeView === "briefing" ? <BriefingPage embedded /> : <>
+          <div className="shrink-0 border-b border-border px-4 py-2 sm:px-5">
+            <Breadcrumbs items={[{ label: "FastNews", href: "/" }, { label: "All Feeds" }]} loading={loading} loadingText="Đang tải dữ liệu bài viết…" />
+          </div>
           {refreshMessage && <p role="status" className="border-b border-border bg-muted/40 px-5 py-2 text-xs text-muted-foreground">{refreshMessage}</p>}
           {/* Controls */}
           <div className="flex-shrink-0 border-b border-border bg-background px-5 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -756,7 +849,7 @@ export default function ReaderPage() {
                 </div>
                 <h3 className="text-base font-bold text-foreground">Không có bài viết</h3>
                   <p className="mt-1 text-sm text-muted-foreground text-center max-w-xs">
-                  {search || categoryFilter || bookmarkFilter !== "all"
+                  {search || categoryFilter || sourceFilterId || bookmarkFilter !== "all"
                     ? "Thử thay đổi bộ lọc hoặc từ khóa tìm kiếm."
                     : sources.length === 0
                       ? "Chưa có nguồn RSS. Hãy thêm nguồn trong Cài đặt rồi chạy ingestion."
@@ -773,7 +866,7 @@ export default function ReaderPage() {
                     </Button>
                   </div>
                 )}
-                {sources.length > 0 && !search && !categoryFilter && bookmarkFilter === "all" && (
+                {sources.length > 0 && !search && !categoryFilter && !sourceFilterId && bookmarkFilter === "all" && (
                   <div className="mt-6">
                     <Button size="sm" onClick={() => void handleRefresh()} disabled={refreshingFeeds}>
                       {refreshingFeeds ? <Loader2 size={14} className="mr-2 animate-spin" /> : <RefreshCw size={14} className="mr-2" />}
@@ -804,7 +897,7 @@ export default function ReaderPage() {
             )}
           </div>
           <aside aria-label="Article reader" className="hidden min-w-0 flex-1 overflow-y-auto bg-background lg:block">
-            <ArticleReaderPanel article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
+            <ArticleReaderPanel key={selectedArticle?.id ?? "empty-desktop"} article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
           </aside>
           </div>
           <p className="sr-only">Keyboard shortcuts: J and K move between articles, slash focuses search, B toggles the selected bookmark, and Escape closes the article panel.</p>
@@ -865,7 +958,7 @@ export default function ReaderPage() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <ArticleReaderPanel article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
+              <ArticleReaderPanel key={selectedArticle?.id ?? "empty-mobile"} article={selectedArticle} summaryLoading={summaryLoading} summaryError={summaryError} onSummarize={() => void summarizeSelectedArticle()} />
             </div>
           </div>
         </SheetContent>

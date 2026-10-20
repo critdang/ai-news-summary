@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, CheckCircle2, CircleAlert, Clock3, ExternalLink, Loader2, Newspaper, Rss, Settings, ShieldAlert, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Breadcrumbs } from "@/components/layout/Breadcrumbs";
 
 type BriefingArticle = {
   id: string;
@@ -137,20 +138,21 @@ export default function BriefingPage({ embedded = false }: { embedded?: boolean 
   ]));
 
   return (
-    <div className={embedded ? "flex h-full min-h-0 flex-col overflow-hidden bg-background" : "flex h-screen flex-col overflow-hidden bg-background"}>
+    <div className={embedded ? "flex h-full min-h-0 flex-col overflow-hidden bg-background" : "flex h-dvh flex-col overflow-hidden bg-background"}>
       {!embedded && <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"><Sparkles size={18} /></div>
-          <div><h1 className="text-base font-bold">Daily Briefing</h1><p className="text-xs text-muted-foreground">Recent stories scored by relevance and urgency</p></div>
+          <div><Breadcrumbs items={[{ label: "FastNews", href: "/" }, { label: "Daily Briefing" }]} loading={loading} loadingText="Loading briefing data…" /><p className="mt-1 text-xs text-muted-foreground">Recent stories scored by relevance and urgency</p></div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Link href="/" className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"><ArrowLeft size={14} className="mr-1.5" /><Rss size={14} className="mr-1.5" />All Feeds</Link>
           <Link href="/settings" className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-muted"><Settings size={14} className="mr-1.5" />Settings</Link>
         </div>
       </header>}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl space-y-6 p-5 md:p-8">
+        <div className="mx-auto max-w-6xl space-y-6 p-3 sm:p-5 md:p-8">
+          {embedded && <Breadcrumbs items={[{ label: "FastNews", href: "/" }, { label: "Daily Briefing" }]} loading={loading} loadingText="Loading briefing data…" />}
           <section className="rounded-2xl border border-border bg-card p-5 md:p-6">
             <div className="mb-5 flex rounded-xl border border-border bg-muted/40 p-1">
               <button

@@ -159,13 +159,13 @@ describe("fetchSourceCandidates — normalization", () => {
 
 describe("default categories", () => {
   it("upserts the six supported categories idempotently", async () => {
-    await ensureDefaultCategories();
+    await ensureDefaultCategories("test-user");
 
     expect(mockPrisma.category.upsert).toHaveBeenCalledTimes(6);
     expect(mockPrisma.category.upsert).toHaveBeenCalledWith({
-      where: { slug: "3d-modeling-cad" },
+      where: { userId_slug: { userId: "test-user", slug: "3d-modeling-cad" } },
       update: {},
-      create: { name: "3D Modeling/CAD", slug: "3d-modeling-cad", sortOrder: 4 },
+      create: { name: "3D Modeling/CAD", slug: "3d-modeling-cad", sortOrder: 4, userId: "test-user" },
     });
   });
 });
