@@ -12,7 +12,7 @@
 const bcrypt = require("bcryptjs");
 const { Pool } = require("pg");
 
-const username = process.argv[2];
+const username = process.argv[2]?.trim().toLowerCase();
 const newPassword = process.argv[3];
 
 if (!username || !newPassword) {
@@ -20,8 +20,8 @@ if (!username || !newPassword) {
   process.exit(1);
 }
 
-if (newPassword.length < 6) {
-  console.error("Password must be at least 6 characters");
+if (newPassword.length < 8 || newPassword.length > 128) {
+  console.error("Password must be 8–128 characters");
   process.exit(1);
 }
 
@@ -42,7 +42,7 @@ async function main() {
     }
 
     const hashed = await bcrypt.hash(newPassword, 12);
-    await pool.query('UPDATE "User" SET password = $1 WHERE username = $2', [hashed, username]);
+    await pool.query('UPDATE "User" SET "passwordHash" = $1 WHERE username = $2', [hashed, username]);
 
     console.log(`Password reset for "${username}" (${rows[0].role}) successfully.`);
   } finally {

@@ -343,7 +343,7 @@ export function UsersAdminTab({ currentUserId }: { currentUserId: string }) {
           <div className="py-4">
             <Input
               type="password"
-              placeholder="New password (min 6 characters)"
+              placeholder="New password (min 8 characters)"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleResetPassword()}
