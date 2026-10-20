@@ -75,6 +75,9 @@ type Article = {
   tags: string[];
   bookmarked: boolean;
   bookmarkNote: string | null;
+  githubStars: number | null;
+  githubForks: number | null;
+  githubTopics: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -202,6 +205,7 @@ const ArticleItem = memo(function ArticleItem({
   onSelect: (a: Article) => void;
   onBookmark: (id: string) => void;
 }) {
+  const githubTopics = article.githubTopics ?? [];
   const handleBookmark = (e: React.MouseEvent) => {
     e.stopPropagation();
     onBookmark(article.id);
@@ -248,6 +252,13 @@ const ArticleItem = memo(function ArticleItem({
           <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">
             {rssPlainText(article.excerpt || article.summary)}
           </p>
+        )}
+        {(article.githubStars != null || article.githubForks != null || githubTopics.length > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            {article.githubStars != null && <span title="GitHub stars">⭐ {article.githubStars.toLocaleString()}</span>}
+            {article.githubForks != null && <span title="GitHub forks">🍴 {article.githubForks.toLocaleString()}</span>}
+            {githubTopics.length > 0 && <span className="max-w-full truncate" title={githubTopics.join(", ")}>🗂️ {githubTopics.join(", ")}</span>}
+          </div>
         )}
         <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
           <span className="min-w-0 truncate max-w-[145px]">{article.source?.title || "Nguồn không xác định"}</span>

@@ -26,6 +26,7 @@ import { categorySlug, DEFAULT_CATEGORIES } from "../src/lib/categoryUtils.ts";
 import { allocateSourceArticleLimits } from "../src/lib/sourceLimits.ts";
 import { mapWithConcurrency } from "../src/lib/batchProcessing.ts";
 import { isScheduledIngestionDue } from "../src/lib/ingestionSchedule.ts";
+import { extractGitHubRepository, fetchGitHubRepositoryMetadata } from "../src/lib/githubRssEnrichment.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config
@@ -53,6 +54,9 @@ interface ArticleCandidate {
   originalTitle: string;
   summary: string | null;
   imageUrl: string | null;
+  githubStars: number | null;
+  githubForks: number | null;
+  githubTopics: string[];
 }
 
 interface SourceFetchResult {
@@ -121,7 +125,8 @@ export async function fetchSourceCandidates(
     title: string;
     category: string;
   },
-  articleLimit: number
+  articleLimit: number,
+  options: { enableGitHubEnrichment?: boolean } = {}
 ): Promise<SourceFetchResult> {
   const result: SourceFetchResult = {
     sourceId: source.id,
@@ -149,6 +154,7 @@ export async function fetchSourceCandidates(
   result.fetched = parsed.items.length;
   const items = parsed.items.slice(0, Math.max(0, articleLimit));
 
+  let githubLookups = 0;
   for (const item of items) {
     const canonical = canonicalizeUrl(item.url);
     if (!canonical) {
@@ -156,6 +162,11 @@ export async function fetchSourceCandidates(
       continue;
     }
     const excerpt = item.content || item.summary || null;
+    const repository = options.enableGitHubEnrichment && githubLookups < 10
+      ? extractGitHubRepository(item.url, item.title, item.content, item.summary)
+      : null;
+    const github = repository ? await fetchGitHubRepositoryMetadata(repository) : null;
+    if (repository) githubLookups += 1;
     result.candidates.push({
       canonicalUrl: canonical,
       title: item.title || "Untitled",
@@ -168,6 +179,9 @@ export async function fetchSourceCandidates(
       url: item.url,
       summary: item.summary ?? null,
       imageUrl: item.imageUrl,
+      githubStars: github?.stars ?? null,
+      githubForks: github?.forks ?? null,
+      githubTopics: github?.topics ?? [],
     });
   }
 
@@ -254,7 +268,7 @@ export async function runIngestion(options: { scheduled?: boolean; userId?: stri
   await ensureSourcePreference(userId);
 
   const preferences = await prisma.userPreference.findUnique({ where: { userId },
-    select: { maxArticlesPerSource: true, ingestionIntervalHours: true },
+    select: { maxArticlesPerSource: true, ingestionIntervalHours: true, githubEnrichmentEnabled: true },
   });
   if (scheduled) {
     const latestRun = await prisma.ingestionRun.findFirst({
@@ -312,7 +326,8 @@ export async function runIngestion(options: { scheduled?: boolean; userId?: stri
   const fetchedSources = await mapWithConcurrency(eligibleSources, FEED_FETCH_CONCURRENCY, async (source) => {
     const fetched = await fetchSourceCandidates(
       { ...source, category: source.category.name },
-      sourceAllocations.get(source.id) ?? 0
+      sourceAllocations.get(source.id) ?? 0,
+      { enableGitHubEnrichment: preferences?.githubEnrichmentEnabled ?? true }
     );
     return { source, fetched };
   });
@@ -335,6 +350,23 @@ export async function runIngestion(options: { scheduled?: boolean; userId?: stri
   const newCandidates = candidates.filter((candidate) => !existingUrls.has(candidate.canonicalUrl));
   duplicateCount += candidates.length - newCandidates.length;
 
+  // Refresh optional GitHub counters for already-known articles too. This lets
+  // users see enrichment after enabling it without waiting for new RSS items.
+  const existingGitHubCandidates = candidates.filter((candidate) =>
+    existingUrls.has(candidate.canonicalUrl) &&
+    (candidate.githubStars !== null || candidate.githubForks !== null || candidate.githubTopics.length > 0)
+  );
+  await mapWithConcurrency(existingGitHubCandidates, 4, async (candidate) => {
+    await prisma.article.updateMany({
+      where: { canonicalUrl: candidate.canonicalUrl, source: { userId } },
+      data: {
+        githubStars: candidate.githubStars,
+        githubForks: candidate.githubForks,
+        githubTopics: candidate.githubTopics,
+      },
+    });
+  });
+
   if (newCandidates.length) {
     await prisma.article.createMany({
       data: newCandidates.map((candidate) => ({
@@ -347,6 +379,9 @@ export async function runIngestion(options: { scheduled?: boolean; userId?: stri
         sourceId: candidate.sourceId,
         processingStatus: "pending",
         aiSummary: null,
+        githubStars: candidate.githubStars,
+        githubForks: candidate.githubForks,
+        githubTopics: candidate.githubTopics,
       })),
       skipDuplicates: true,
     });

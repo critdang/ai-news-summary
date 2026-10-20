@@ -14,6 +14,7 @@ const DEFAULT_PREFERENCES = {
   ingestionIntervalHours: 12 as const,
   aiProvider: defaultProvider,
   aiModel: resolveAIModel(defaultProvider, defaultProvider === "gemini" ? process.env.AI_MODEL : process.env.GROQ_MODEL),
+  githubEnrichmentEnabled: true,
 };
 
 export async function GET(): Promise<NextResponse> {
@@ -22,7 +23,7 @@ export async function GET(): Promise<NextResponse> {
     if (!userId) return response!;
     const [saved, keys] = await Promise.all([
       prisma.userPreference.findUnique({ where: { userId },
-        select: { language: true, retentionDays: true, maxArticlesPerSource: true, ingestionIntervalHours: true, aiProvider: true, aiModel: true, geminiApiKeyEncrypted: true, groqApiKeyEncrypted: true },
+        select: { language: true, retentionDays: true, maxArticlesPerSource: true, ingestionIntervalHours: true, aiProvider: true, aiModel: true, githubEnrichmentEnabled: true, geminiApiKeyEncrypted: true, groqApiKeyEncrypted: true },
       }),
       getUserProviderKeys(userId),
     ]);
@@ -39,6 +40,7 @@ export async function GET(): Promise<NextResponse> {
             ingestionIntervalHours: saved.ingestionIntervalHours,
             aiProvider: saved.aiProvider,
             aiModel: saved.aiModel,
+            githubEnrichmentEnabled: saved.githubEnrichmentEnabled,
           }
         : DEFAULT_PREFERENCES,
       availableProviders: {
@@ -108,6 +110,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         ingestionIntervalHours: saved.ingestionIntervalHours,
         aiProvider: saved.aiProvider,
         aiModel: saved.aiModel,
+        githubEnrichmentEnabled: saved.githubEnrichmentEnabled,
       },
     });
   } catch (error) {

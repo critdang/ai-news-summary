@@ -117,6 +117,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       tags: a.tags,
       bookmarked: a.bookmarked,
       bookmarkNote: a.bookmarkNote,
+      githubStars: a.githubStars,
+      githubForks: a.githubForks,
+      githubTopics: a.githubTopics,
       createdAt: a.createdAt,
       updatedAt: a.updatedAt,
     }));

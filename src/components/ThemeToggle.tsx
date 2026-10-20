@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { Sun, Moon, Monitor } from "lucide-react";
 import { useTheme } from "@/lib/hooks/useTheme";
 import { cn } from "@/lib/utils";
@@ -18,9 +19,22 @@ export function ThemeToggle({
   compact?: boolean;
 }) {
   const { theme, setTheme } = useTheme();
+  const systemIsDark = useSyncExternalStore(
+    (onChange) => {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      mediaQuery.addEventListener("change", onChange);
+      return () => mediaQuery.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+    // Keep the server and initial client HTML identical, then let React update
+    // after hydration with the browser's actual system preference.
+    () => false,
+  );
 
   if (compact) {
-    const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    // The first client render must match the server. Reading matchMedia here
+    // before hydration creates different button labels/icons on dark systems.
+    const isDark = theme === "dark" || (theme === "system" && systemIsDark);
     return (
       <button
         onClick={() => setTheme(isDark ? "light" : "dark")}

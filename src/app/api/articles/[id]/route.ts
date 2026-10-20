@@ -54,6 +54,9 @@ export async function GET(
       tags: article.tags,
       bookmarked: article.bookmarked,
       bookmarkNote: article.bookmarkNote,
+      githubStars: article.githubStars,
+      githubForks: article.githubForks,
+      githubTopics: article.githubTopics,
       createdAt: article.createdAt,
       updatedAt: article.updatedAt,
     });

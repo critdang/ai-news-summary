@@ -2,9 +2,11 @@ export type PreferencesInput = {
   language: string;
   retentionDays: number;
   maxArticlesPerRun: number;
-  ingestionIntervalHours: 12 | 24;
+  maxArticlesPerSource?: number;
+  ingestionIntervalHours?: 12 | 24;
   aiProvider?: "gemini" | "groq" | "mock";
   aiModel?: string;
+  githubEnrichmentEnabled?: boolean;
 };
 
 export const AI_MODELS = {
@@ -37,7 +39,9 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     return { ok: false, error: "Retention must be a whole number from 30 to 60 days" };
   }
 
-  if (!Number.isInteger(input.maxArticlesPerRun) || Number(input.maxArticlesPerRun) < 1 || Number(input.maxArticlesPerRun) > 50) {
+  // Determine effective max articles per run, accepting both new and legacy field names.
+  const effectiveMax = input.maxArticlesPerRun !== undefined ? Number(input.maxArticlesPerRun) : Number(input.maxArticlesPerSource);
+  if (!Number.isInteger(effectiveMax) || effectiveMax < 1 || effectiveMax > 50) {
     return { ok: false, error: "The total article limit must be a whole number from 1 to 50" };
   }
 
@@ -65,6 +69,10 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
     }
   }
 
+  if (input.githubEnrichmentEnabled !== undefined && typeof input.githubEnrichmentEnabled !== "boolean") {
+    return { ok: false, error: "GitHub enrichment must be enabled or disabled" };
+  }
+
   return {
     ok: true,
     value: {
@@ -74,6 +82,7 @@ export function validatePreferencesInput(value: unknown): PreferencesValidation 
       ingestionIntervalHours: input.ingestionIntervalHours,
       ...(aiProvider ? { aiProvider } : {}),
       ...(aiModel ? { aiModel } : {}),
+      ...(typeof input.githubEnrichmentEnabled === "boolean" ? { githubEnrichmentEnabled: input.githubEnrichmentEnabled } : {}),
     },
   };
 }

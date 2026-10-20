@@ -27,6 +27,8 @@ import {
   FolderOpen,
   Pencil,
   KeyRound,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +78,7 @@ type Preferences = {
   ingestionIntervalHours: 12 | 24;
   aiProvider: "gemini" | "groq" | "mock";
   aiModel: string;
+  githubEnrichmentEnabled: boolean;
 };
 
 type ProviderStatus = {
@@ -134,10 +137,12 @@ export default function SettingsPage() {
     ingestionIntervalHours: 12,
     aiProvider: "groq",
     aiModel: "openai/gpt-oss-20b",
+    githubEnrichmentEnabled: true,
   });
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatuses>(INITIAL_PROVIDER_STATUSES);
   const [providerCredentials, setProviderCredentials] = useState<ProviderCredentialState>({ gemini: false, groq: false });
   const [providerKeyDrafts, setProviderKeyDrafts] = useState({ gemini: "", groq: "" });
+  const [showProviderKey, setShowProviderKey] = useState(false);
   const [savingProviderKey, setSavingProviderKey] = useState<"gemini" | "groq" | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [providerKeyMessage, setProviderKeyMessage] = useState<string | null>(null);
@@ -313,6 +318,31 @@ export default function SettingsPage() {
       toast.success("Settings saved");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Không thể lưu cài đặt";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
+
+  const handleToggleGitHubEnrichment = async () => {
+    const nextPreferences = { ...preferences, githubEnrichmentEnabled: !preferences.githubEnrichmentEnabled };
+    setPreferences(nextPreferences);
+    setError(null);
+    setSavingPreferences(true);
+    try {
+      const res = await fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextPreferences),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not update GitHub enrichment");
+      setPreferences(data.data);
+      toast.success(`GitHub enrichment ${data.data.githubEnrichmentEnabled ? "enabled" : "disabled"}`);
+    } catch (cause) {
+      setPreferences(preferences);
+      const message = cause instanceof Error ? cause.message : "Could not update GitHub enrichment";
       setError(message);
       toast.error(message);
     } finally {
@@ -526,6 +556,24 @@ export default function SettingsPage() {
             <TabsContent value="sources">
               <div className="space-y-4">
                 <ConnectorSourceManager />
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">GitHub RSS enrichment</CardTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">Add stars, forks, and repository topics to GitHub RSS articles when a specific repository can be identified. Changes apply to future ingestion runs.</p>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-0">
+                    <span className="text-sm">Enable GitHub enrichment</span>
+                    <Button
+                      type="button"
+                      variant={preferences.githubEnrichmentEnabled ? "default" : "outline"}
+                      aria-pressed={preferences.githubEnrichmentEnabled}
+                      disabled={savingPreferences}
+                      onClick={() => void handleToggleGitHubEnrichment()}
+                    >
+                      {preferences.githubEnrichmentEnabled ? "Enabled" : "Disabled"}
+                    </Button>
+                  </CardContent>
+                </Card>
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between py-2">
                     <CardTitle className="text-sm">Thêm nguồn RSS</CardTitle>
@@ -822,15 +870,26 @@ export default function SettingsPage() {
                           <p className="mt-1 text-xs text-muted-foreground">Enter your key here. It is encrypted on the server and never shown again. Leave blank until you are ready to save a new key.</p>
                         </div>
                         <label className="sr-only" htmlFor="provider-api-key">{preferences.aiProvider} API key</label>
-                        <Input
-                          id="provider-api-key"
-                          type="password"
-                          autoComplete="new-password"
-                          value={providerKeyDrafts[selectedCredentialProvider]}
-                          onChange={(event) => setProviderKeyDrafts((current) => ({ ...current, [selectedCredentialProvider]: event.target.value }))}
-                          placeholder={providerCredentials[selectedCredentialProvider] ? "Key saved · enter a new key to replace" : "Paste your API key"}
-                          className="font-mono"
-                        />
+                        <div className="relative">
+                          <Input
+                            id="provider-api-key"
+                            type={showProviderKey ? "text" : "password"}
+                            autoComplete="new-password"
+                            value={providerKeyDrafts[selectedCredentialProvider]}
+                            onChange={(event) => setProviderKeyDrafts((current) => ({ ...current, [selectedCredentialProvider]: event.target.value }))}
+                            placeholder={providerCredentials[selectedCredentialProvider] ? "Key saved · enter a new key to replace" : "Paste your API key"}
+                            className="pr-10 font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowProviderKey((visible) => !visible)}
+                            className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground hover:text-foreground"
+                            aria-label={showProviderKey ? "Hide API key" : "Show API key"}
+                            title={showProviderKey ? "Hide API key" : "Show API key"}
+                          >
+                            {showProviderKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <Button type="button" variant="outline" disabled={savingProviderKey === selectedCredentialProvider || providerKeyDrafts[selectedCredentialProvider].trim().length < 8} onClick={() => void handleSaveProviderKey(selectedCredentialProvider)}>
                             {savingProviderKey === selectedCredentialProvider && <Loader2 size={13} className="mr-2 animate-spin" />}Save API key

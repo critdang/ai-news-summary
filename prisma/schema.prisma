@@ -70,6 +70,9 @@ model Article {
   tags                 String[]  @default([])
   bookmarked           Boolean   @default(false)
   bookmarkNote         String?   @db.Text
+  githubStars          Int?
+  githubForks          Int?
+  githubTopics         String[]  @default([])
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
@@ -120,6 +123,7 @@ model UserPreference {
   aiModel                String   @default("gemini-1.5-flash")
   geminiApiKeyEncrypted  String?  @db.Text
   groqApiKeyEncrypted    String?  @db.Text
+  githubEnrichmentEnabled Boolean @default(true)
   maxArticlesPerSource   Int      @default(20)
   ingestionIntervalHours Int      @default(12)
   createdAt              DateTime @default(now())

@@ -12,6 +12,7 @@ import { validateFeedUrl } from "@/lib/utils/url-validator";
 import * as cheerio from "cheerio";
 import { authenticatedUser } from "@/lib/api-auth";
 import { getUserProviderKeys } from "@/lib/providerCredentials";
+import { extractGitHubRepository, fetchGitHubRepositoryMetadata } from "@/lib/githubRssEnrichment";
 
 export const maxDuration = 60;
 
@@ -71,7 +72,7 @@ async function updateSourceHealth(sourceId: string, error?: string) {
   ]);
 }
 
-async function fetchSelectedSources(sources: BriefingSource[], totalLimit: number) {
+async function fetchSelectedSources(sources: BriefingSource[], totalLimit: number, enableGitHubEnrichment: boolean) {
   const allocations = allocateSourceArticleLimits(sources, totalLimit);
   const eligibleSources = sources.filter((source) => (allocations.get(source.id) ?? 0) > 0);
   const fetched = await mapWithConcurrency(eligibleSources, FEED_FETCH_CONCURRENCY, async (source) => {
@@ -79,11 +80,21 @@ async function fetchSelectedSources(sources: BriefingSource[], totalLimit: numbe
       const feed = await parseFeed(source.url);
       await updateSourceHealth(source.id);
       const limit = Math.min(allocations.get(source.id) ?? 0, MAX_FEED_ARTICLES);
-      const candidates = feed.items.slice(0, limit).flatMap((item) => {
+      const candidates: Array<{
+        canonicalUrl: string; title: string; url: string; excerpt: string | null; summary: string | null;
+        publishedAt: Date | null; sourceId: string; githubStars: number | null; githubForks: number | null; githubTopics: string[];
+      }> = [];
+      let githubLookups = 0;
+      for (const item of feed.items.slice(0, limit)) {
         const canonicalUrl = canonicalizeUrl(item.url);
-        if (!canonicalUrl) return [];
+        if (!canonicalUrl) continue;
         const excerpt = item.content || item.summary || null;
-        return [{
+        const repository = enableGitHubEnrichment && githubLookups < 10
+          ? extractGitHubRepository(item.url, item.title, item.content, item.summary)
+          : null;
+        const github = repository ? await fetchGitHubRepositoryMetadata(repository) : null;
+        if (repository) githubLookups += 1;
+        candidates.push({
           canonicalUrl,
           title: item.title || "Untitled",
           url: canonicalUrl,
@@ -91,8 +102,11 @@ async function fetchSelectedSources(sources: BriefingSource[], totalLimit: numbe
           summary: item.summary?.slice(0, 500) ?? null,
           publishedAt: item.publishedAt,
           sourceId: source.id,
-        }];
-      });
+          githubStars: github?.stars ?? null,
+          githubForks: github?.forks ?? null,
+          githubTopics: github?.topics ?? [],
+        });
+      }
       return { source, itemCount: feed.items.length, candidates, error: null };
     } catch (cause) {
       const message = cause instanceof Error ? cause.message.slice(0, 500) : "Feed request failed";
@@ -120,6 +134,9 @@ async function fetchSelectedSources(sources: BriefingSource[], totalLimit: numbe
           publishedAt: candidate.publishedAt,
           sourceId: candidate.sourceId,
           processingStatus: "pending",
+          githubStars: candidate.githubStars,
+          githubForks: candidate.githubForks,
+          githubTopics: candidate.githubTopics,
         })),
         skipDuplicates: true,
       })
@@ -213,7 +230,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const [preferences, configuredSources] = await Promise.all([
-      prisma.userPreference.findUnique({ where: { userId }, select: { language: true, aiProvider: true, aiModel: true, maxArticlesPerSource: true } }),
+      prisma.userPreference.findUnique({ where: { userId }, select: { language: true, aiProvider: true, aiModel: true, maxArticlesPerSource: true, githubEnrichmentEnabled: true } }),
       prisma.source.findMany({
         where: { userId, ...(categories.length ? { category: { name: { in: categories as string[] } } } : {}) },
         include: { category: { select: { name: true } } },
@@ -223,6 +240,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const refresh = await fetchSelectedSources(
       configuredSources as BriefingSource[],
       Math.min(MAX_FEED_ARTICLES, preferences?.maxArticlesPerSource || Number(process.env.MAX_ARTICLES_PER_RUN) || 50),
+      preferences?.githubEnrichmentEnabled ?? true,
     );
 
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
