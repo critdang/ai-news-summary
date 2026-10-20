@@ -20,13 +20,19 @@ Environment provider keys remain optional deployment defaults and fallbacks.
 1. Import the GitHub repository into Vercel and select the Next.js framework.
 2. Add `DATABASE_URL` to the Vercel project environment variables. Use the
    Supabase transaction pooler URL for the serverless app.
-3. Set a strong random `AUTH_SECRET` in Vercel and apply the reviewed Prisma
-   migrations to the Supabase database before the first reader request. The
+3. Set a strong random `AUTH_SECRET` in Vercel (or keep the legacy
+   `NEXTAUTH_SECRET` variable used by existing Docker deployments) and apply
+   the reviewed Prisma migrations to the Supabase database before the first
+   reader request. The
    migration command loads `.env` and uses `DIRECT_URL` when available:
 
    ```sh
    node --env-file-if-exists=.env ./node_modules/prisma/build/index.js migrate deploy --config prisma/prisma.config.ts
    ```
+
+   If both variables exist, `AUTH_SECRET` takes precedence. The secret must be
+   at least 32 characters and must remain unchanged across deployments, or
+   existing sessions and encrypted provider credentials will stop working.
 
 4. Deploy and visit `/setup` to create the first admin account. Existing feeds,
    folders, preferences, and ingestion history are assigned to that account.
