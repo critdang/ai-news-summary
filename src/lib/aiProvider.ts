@@ -44,6 +44,7 @@ export type ProviderUsage = { inputTokens?: number; outputTokens?: number };
 export type AIProviderSelection = {
   provider?: "gemini" | "groq" | "mock";
   model?: string;
+  apiKeys?: Partial<Record<"gemini" | "groq", string>>;
 };
 
 const BatchResultSchema = z.object({
@@ -258,8 +259,8 @@ class GeminiProvider implements AIProvider {
   private timeoutMs: number;
   private maxRetries: number;
 
-  constructor(modelOverride?: string) {
-    this.apiKey = process.env.GEMINI_API_KEY || "";
+  constructor(modelOverride?: string, apiKey?: string) {
+    this.apiKey = apiKey || process.env.GEMINI_API_KEY || "";
     this.model = modelOverride || process.env.AI_MODEL || "gemini-3.8-flash";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
@@ -370,8 +371,8 @@ class GroqProvider implements AIProvider {
   private timeoutMs: number;
   private maxRetries: number;
 
-  constructor(modelOverride?: string) {
-    this.apiKey = process.env.GROQ_API_KEY || "";
+  constructor(modelOverride?: string, apiKey?: string) {
+    this.apiKey = apiKey || process.env.GROQ_API_KEY || "";
     this.model = modelOverride || process.env.GROQ_MODEL || "openai/gpt-oss-20b";
     this.timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 15000;
     this.maxRetries = Number(process.env.AI_MAX_RETRIES) || 3;
@@ -562,11 +563,13 @@ function createProviders(selection?: AIProviderSelection): AIProvider[] {
   }
 
   const providers: AIProvider[] = [];
-  if (process.env.GEMINI_API_KEY) {
-    providers.push(new GeminiProvider(preferred === "gemini" ? selection?.model : undefined));
+  const geminiKey = selection?.apiKeys?.gemini || process.env.GEMINI_API_KEY;
+  const groqKey = selection?.apiKeys?.groq || process.env.GROQ_API_KEY;
+  if (geminiKey) {
+    providers.push(new GeminiProvider(preferred === "gemini" ? selection?.model : undefined, geminiKey));
   }
-  if (process.env.GROQ_API_KEY) {
-    providers.push(new GroqProvider(preferred === "groq" ? selection?.model : undefined));
+  if (groqKey) {
+    providers.push(new GroqProvider(preferred === "groq" ? selection?.model : undefined, groqKey));
   }
   return providers;
 }

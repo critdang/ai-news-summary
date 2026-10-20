@@ -1,9 +1,6 @@
-// Simplified single-user schema for the AI News Summary MVP.
+// Multi-user schema for the AI News Summary app.
 // Adapted from Feed2040 (MIT, https://github.com/0xhav0c/Feed2040).
 //
-// Multi-user / next-auth / pgvector / Telegram / push-notification tables
-// were removed for the serverless single-user deployment. Auth can be added
-// later by reintroducing a User model and RLS policies.
 
 generator client {
   provider = "prisma-client-js"
@@ -14,35 +11,45 @@ datasource db {
 }
 
 model Source {
-  id          String    @id @default(cuid())
-  title       String
-  url         String    @unique
-  categoryId  String
+  id                String    @id @default(cuid())
+  title             String
+  url               String
+  userId            String?
+  categoryId        String
   maxArticlesPerRun Int?
-  lastFetched DateTime?
-  errorCount  Int       @default(0)
-  fetchError  String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  lastFetched       DateTime?
+  errorCount        Int       @default(0)
+  fetchError        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   articles Article[]
   health   FeedHealth?
   category Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user     User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, url])
   @@index([categoryId])
   @@index([url])
+  @@index([userId])
 }
 
 model Category {
   id        String   @id @default(cuid())
-  name      String   @unique
-  slug      String   @unique
+  name      String
+  slug      String
+  userId    String?
+  color     String?  @db.VarChar(20)
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   sources   Source[]
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, name])
+  @@unique([userId, slug])
   @@index([slug])
+  @@index([userId])
 }
 
 model Article {
@@ -66,7 +73,7 @@ model Article {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  @@unique([canonicalUrl])
+  @@unique([sourceId, canonicalUrl])
   @@index([sourceId])
   @@index([publishedAt])
   @@index([bookmarked])
@@ -84,9 +91,12 @@ model IngestionRun {
   errorCount       Int       @default(0)
   errorMessage     String?
   sourcesProcessed Int       @default(0)
+  userId           String?
+  user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@index([startedAt])
+  @@index([userId])
 }
 
 model FeedHealth {
@@ -103,13 +113,113 @@ model FeedHealth {
 }
 
 model UserPreference {
-  id                   String   @id @default(cuid())
-  language             String   @default("vi") // summary language, default Vietnamese
-  retentionDays        Int      @default(45) // 30-60 configurable
-  aiProvider           String   @default("gemini")
-  aiModel              String   @default("gemini-1.5-flash")
-  maxArticlesPerSource Int      @default(20)
-  ingestionIntervalHours Int    @default(12)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  language               String   @default("vi") // summary language, default Vietnamese
+  retentionDays          Int      @default(45) // 30-60 configurable
+  aiProvider             String   @default("gemini")
+  aiModel                String   @default("gemini-1.5-flash")
+  geminiApiKeyEncrypted  String?  @db.Text
+  groqApiKeyEncrypted    String?  @db.Text
+  maxArticlesPerSource   Int      @default(20)
+  ingestionIntervalHours Int      @default(12)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  userId                 String?  @unique
+  user                   User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String             @id @default(cuid())
+  username      String             @unique
+  passwordHash  String
+  role          String             @default("user")
+  createdAt     DateTime           @default(now())
+  categories    Category[]
+  sources       Source[]
+  runs          IngestionRun[]
+  preference    UserPreference?
+  connectors    ConnectorConfig[]
+  projects      Project[]
+  connectorRuns ConnectorSyncRun[]
+}
+
+// Connector definitions are code; each row is a user's saved configuration.
+model ConnectorConfig {
+  id           String             @id @default(cuid())
+  userId       String
+  type         String
+  version      Int                @default(1)
+  name         String
+  enabled      Boolean            @default(true)
+  config       Json
+  lastSyncedAt DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projects     Project[]
+  runs         ConnectorSyncRun[]
+
+  @@index([userId, type])
+  @@index([userId, enabled])
+}
+
+// Projects are a separate domain from articles and never enter News Feed.
+model Project {
+  id                String                  @id @default(cuid())
+  userId            String
+  connectorConfigId String
+  externalId        String
+  canonicalUrl      String
+  owner             String
+  name              String
+  fullName          String
+  description       String?                 @db.Text
+  language          String?
+  stars             Int                     @default(0)
+  forks             Int                     @default(0)
+  topics            String[]                @default([])
+  upstreamCreatedAt DateTime?
+  upstreamUpdatedAt DateTime?
+  lastSyncedAt      DateTime                @default(now())
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectorConfig   ConnectorConfig         @relation(fields: [connectorConfigId], references: [id], onDelete: Cascade)
+  metricSnapshots   ProjectMetricSnapshot[]
+
+  @@unique([connectorConfigId, externalId])
+  @@index([userId, stars])
+  @@index([userId, upstreamUpdatedAt])
+  @@index([userId, language])
+}
+
+model ProjectMetricSnapshot {
+  id         String   @id @default(cuid())
+  projectId  String
+  capturedAt DateTime @db.Date
+  stars      Int
+  forks      Int
+  createdAt  DateTime @default(now())
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, capturedAt])
+  @@index([projectId, capturedAt])
+}
+
+model ConnectorSyncRun {
+  id                String          @id @default(cuid())
+  userId            String
+  connectorConfigId String
+  status            String
+  startedAt         DateTime        @default(now())
+  completedAt       DateTime?
+  fetchedCount      Int             @default(0)
+  insertedCount     Int             @default(0)
+  updatedCount      Int             @default(0)
+  errorMessage      String?         @db.Text
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectorConfig   ConnectorConfig @relation(fields: [connectorConfigId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([connectorConfigId, startedAt])
 }

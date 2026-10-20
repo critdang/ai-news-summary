@@ -6,10 +6,14 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { authenticatedUser } from "@/lib/api-auth";
 
 export async function GET(): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const runs = await prisma.ingestionRun.findMany({
+      where: { userId },
       orderBy: { startedAt: "desc" },
       take: 50,
       select: {
@@ -26,7 +30,7 @@ export async function GET(): Promise<NextResponse> {
     });
 
     const lastSuccess = await prisma.ingestionRun.findFirst({
-      where: { status: "completed" },
+      where: { status: "completed", userId },
       orderBy: { completedAt: "desc" },
       select: { completedAt: true },
     });

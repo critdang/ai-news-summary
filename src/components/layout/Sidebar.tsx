@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   Newspaper,
   Code,
+  Github,
   Bot,
   FlaskConical,
   Palette,
@@ -61,6 +62,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 
 const ICON_MAP: Record<string, LucideIcon> = {
   FolderTree,
@@ -113,6 +115,7 @@ const NAV_ITEMS = [
   { href: "/feeds?saved=1", label: "Saved", icon: BookmarkPlus, param: "saved" },
   { href: "/bookmarks", label: "Read Later", icon: Bookmark, param: "" },
   { href: "/briefing", label: "Daily Briefing", icon: Sparkles, param: "" },
+  { href: "/discover/projects", label: "Discover Projects", icon: Github, param: "" },
   { href: "/settings", label: "Settings", icon: Settings, param: "" },
 ] as const;
 
@@ -157,25 +160,32 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
   const activeSaved = searchParams.get("saved") === "1";
 
   const handleEditSave = async (id: string, title: string, options?: { scrapeFullText?: boolean; refreshInterval?: number | null }) => {
-    await fetch(`/api/feeds/${id}`, {
+    const response = await fetch(`/api/feeds/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, ...options }),
     });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Could not save feed settings");
     setEditFeed(null);
     fetchSidebar();
+    toast.success("Feed settings saved");
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteFeed) return;
     setDeleteLoading(true);
     try {
-      await fetch(`/api/feeds/${deleteFeed.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/feeds/${deleteFeed.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Could not delete feed");
       setDeleteFeed(null);
       if (activeFeedId === deleteFeed.id) {
         router.push("/feeds");
       }
       fetchSidebar();
+      toast.success(`Feed “${deleteFeed.title}” deleted`);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not delete feed");
     } finally {
       setDeleteLoading(false);
     }
@@ -185,6 +195,7 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
     setSavedSearches((prev) => prev.filter((s) => s.id !== id));
     try {
       await fetch(`/api/saved-searches/${id}`, { method: "DELETE" });
+      toast.success("Saved search deleted");
     } catch {
       /* silent; already removed optimistically */
     }
@@ -263,7 +274,7 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
               <Rss className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="text-xl font-bold tracking-tight text-foreground">
-              Feed2040
+              FastNews
             </span>
           </Link>
         ) : (
@@ -278,7 +289,7 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }) {
             >
               <Rss className="h-4 w-4 text-primary-foreground" />
             </TooltipTrigger>
-            <TooltipContent side="right">Feed2040</TooltipContent>
+            <TooltipContent side="right">FastNews</TooltipContent>
           </Tooltip>
         )}
       </div>

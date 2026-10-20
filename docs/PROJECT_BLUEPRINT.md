@@ -28,6 +28,13 @@ Create a personal AI‑powered news reader focused on **Software Engineering, AI
 - **AI Provider Layer** – `src/lib/aiProvider.ts` abstracts Groq, Gemini, and mock mode with timeout/retry/fallback.
 - **Retention Job** – `scripts/cleanup.ts` run as a separate GH Action.
 
+## Connector Discovery (Phase 6)
+- News Feed continues to store RSS articles in `Article`; Daily Briefing continues to use that RSS article dataset.
+- `src/lib/connectors` defines a versioned connector contract and registry. Connector code is separate from user-owned `ConnectorConfig` rows.
+- GitHub repository discovery is the first non-RSS connector. It writes normalized `Project` records and daily `ProjectMetricSnapshot` rows, never `Article` rows.
+- Connector sync history is stored in `ConnectorSyncRun`. Per-user ownership and unique external IDs make repeated syncs isolated and idempotent.
+- Discover is organized by output type (`Projects`), not connector implementation. Releases and safe field-mapped REST connectors are future phases.
+
 ## Risks & Mitigations
 - **Quota exhaustion** – cap total new articles per run across feeds, honor provider retry windows, and bound queued summary retries.
 - **Credential leakage** – never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser; keep it in GH Actions secrets.

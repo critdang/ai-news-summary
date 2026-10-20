@@ -7,10 +7,10 @@ const WEAK_SECRETS = new Set([
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const secret = process.env.NEXTAUTH_SECRET;
+    const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
     if (!secret || secret.length < 16 || WEAK_SECRETS.has(secret)) {
       console.warn(
-        "\n⚠️  WARNING: NEXTAUTH_SECRET is weak or missing. " +
+        "\n⚠️  WARNING: AUTH_SECRET (or NEXTAUTH_SECRET) is weak or missing. " +
           "Generate a strong secret with: openssl rand -base64 32\n"
       );
     }

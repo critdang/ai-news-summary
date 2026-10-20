@@ -31,8 +31,8 @@ export function Header({
   actions,
 }: HeaderProps) {
   return (
-    <header className="flex h-[72px] items-center justify-between border-b border-border bg-card/80 backdrop-blur-sm px-8">
-      <div className="min-w-0">
+    <header className="flex min-h-[72px] h-auto flex-wrap items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 py-3 sm:px-8">
+      <div className="min-w-0 flex-1">
         <h1 className="text-xl font-bold text-foreground tracking-tight">
           {title}
         </h1>
@@ -41,7 +41,7 @@ export function Header({
         )}
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-end gap-2.5">
         {onViewModeChange && (
           <div className="mr-1 flex items-center rounded-lg border border-border bg-muted/50 p-0.5">
             {VIEW_OPTIONS.map((option) => {

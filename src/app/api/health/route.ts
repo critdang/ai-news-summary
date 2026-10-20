@@ -6,10 +6,14 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { authenticatedUser } from "@/lib/api-auth";
 
 export async function GET(): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const health = await prisma.feedHealth.findMany({
+      where: { source: { userId } },
       include: {
         source: {
           select: {

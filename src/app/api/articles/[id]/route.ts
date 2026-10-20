@@ -6,16 +6,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { authenticatedUser } from "@/lib/api-auth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const { id } = await params;
 
     const article = await prisma.article.findUnique({
-      where: { id },
+      where: { id, source: { userId } },
       include: {
         source: {
           select: {

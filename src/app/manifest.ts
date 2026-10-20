@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "AI News Summary",
-    short_name: "AI News",
+    name: "FastNews",
+    short_name: "FastNews",
     description: "AI-powered RSS reader with daily briefings",
-    start_url: "/feeds",
+    start_url: "/",
     display: "standalone",
     background_color: "#0a0a0b",
     theme_color: "#22d3ee",

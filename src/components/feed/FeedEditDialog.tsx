@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { X, ExternalLink, Loader2, AlertTriangle, Clock, Rss } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 
 const INTERVAL_OPTIONS = [
   { value: 0, label: "Use global setting" },
@@ -84,6 +85,8 @@ export function FeedEditDialog({ open, feedId, initialTitle, onSave, onClose }: 
         scrapeFullText,
         refreshInterval: refreshInterval || null,
       });
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not save feed settings");
     } finally {
       setSaving(false);
     }

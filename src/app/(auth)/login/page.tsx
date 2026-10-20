@@ -3,12 +3,12 @@
 import { Suspense, useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { Rss, User, Lock, Loader2, ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { AuthOptions } from "@/components/auth/AuthOptions";
 
 function LoginForm() {
   const [username, setUsername] = useState("");
@@ -19,7 +19,12 @@ function LoginForm() {
   const [error, setError] = useState("");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/feeds";
+  const requestedCallback = searchParams.get("callbackUrl");
+  const callbackPath = requestedCallback?.split(/[?#]/, 1)[0] ?? "";
+  const callbackUrl = requestedCallback?.startsWith("/") && !requestedCallback.startsWith("//") &&
+    ["/", "/settings", "/briefing", "/discover/projects", "/discover/connectors"].includes(callbackPath)
+    ? requestedCallback
+    : "/";
 
   // Check if setup is needed on mount
   useEffect(() => {
@@ -178,25 +183,17 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-xl shadow-primary/25">
             <Rss className="h-7 w-7 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Feed2040</h1>
+          <h1 className="text-2xl font-bold tracking-tight">FastNews</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to your smart RSS reader
           </p>
         </div>
+        <AuthOptions active="sign-in" />
         <Suspense
           fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted" />}
         >
           <LoginForm />
         </Suspense>
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link
-            href="/register"
-            className="font-medium text-primary hover:underline"
-          >
-            Sign up
-          </Link>
-        </p>
       </div>
     </div>
   );

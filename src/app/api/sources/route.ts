@@ -9,13 +9,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { validateFeedUrl } from "@/lib/utils/url-validator";
 import { categorySlug } from "@/lib/categoryUtils";
+import { authenticatedUser } from "@/lib/api-auth";
 
 export async function GET(): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const sources = await prisma.source.findMany({
+      where: { userId },
       orderBy: [{ category: { name: "asc" } }, { title: "asc" }],
       include: {
-        category: { select: { name: true } },
+        category: { select: { id: true, name: true, color: true } },
         _count: { select: { articles: true } },
         health: true,
       },
@@ -24,6 +28,8 @@ export async function GET(): Promise<NextResponse> {
       data: sources.map(({ category, ...source }) => ({
         ...source,
         category: category.name,
+        categoryId: category.id,
+        categoryColor: category.color,
       })),
     });
   } catch (error) {
@@ -34,6 +40,8 @@ export async function GET(): Promise<NextResponse> {
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    const { userId, response } = await authenticatedUser();
+    if (!userId) return response!;
     const body = await req.json();
     const { url, title, category } = body as {
       url?: string;
@@ -60,16 +68,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       : sourceUrl;
 
     // Idempotent: if a source with this URL already exists, return it.
-    const existing = await prisma.source.findUnique({ where: { url: sourceUrl } });
+    const existing = await prisma.source.findFirst({ where: { url: sourceUrl, userId } });
     if (existing) {
       return NextResponse.json({ data: existing }, { status: 200 });
     }
 
     const slug = categorySlug(cat);
     const categoryRow = await prisma.category.upsert({
-      where: { slug },
+      where: { userId_slug: { userId, slug } },
       update: {},
-      create: { name: cat || "Uncategorized", slug, sortOrder: 0 },
+      create: { name: cat || "Uncategorized", slug, userId, sortOrder: 0 },
     });
 
     const source = await prisma.source.create({
@@ -77,6 +85,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         title: sourceTitle,
         url: sourceUrl,
         categoryId: categoryRow.id,
+        userId,
       },
     });
 

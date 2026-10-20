@@ -68,8 +68,8 @@ interface SourceFetchResult {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function ensureSourcePreference(): Promise<void> {
-  const existing = await prisma.userPreference.findFirst();
+async function ensureSourcePreference(userId: string): Promise<void> {
+  const existing = await prisma.userPreference.findUnique({ where: { userId } });
   if (!existing) {
     await prisma.userPreference.create({
       data: {
@@ -81,25 +81,26 @@ async function ensureSourcePreference(): Promise<void> {
           : process.env.GROQ_MODEL || "openai/gpt-oss-20b",
         maxArticlesPerSource: MAX_ARTICLES_PER_RUN,
         ingestionIntervalHours: 12,
+        userId,
       },
     });
   }
 }
 
-export async function ensureDefaultCategories(): Promise<void> {
+export async function ensureDefaultCategories(userId: string): Promise<void> {
   for (const [sortOrder, name] of DEFAULT_CATEGORIES.entries()) {
     await prisma.category.upsert({
-      where: { slug: categorySlug(name) },
+      where: { userId_slug: { userId, slug: categorySlug(name) } },
       update: {},
-      create: { name, slug: categorySlug(name), sortOrder },
+      create: { name, slug: categorySlug(name), sortOrder, userId },
     });
   }
 }
 
-export async function markStaleIngestionRuns(now = new Date()): Promise<number> {
+export async function markStaleIngestionRuns(now = new Date(), userId?: string): Promise<number> {
   const cutoff = new Date(now.getTime() - 30 * 60 * 1000);
   const result = await prisma.ingestionRun.updateMany({
-    where: { status: "running", startedAt: { lt: cutoff } },
+    where: { status: "running", startedAt: { lt: cutoff }, ...(userId ? { userId } : {}) },
     data: {
       status: "failed",
       completedAt: now,
@@ -240,18 +241,24 @@ async function updateFeedHealth(
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function runIngestion(options: { scheduled?: boolean } = {}): Promise<void> {
+export async function runIngestion(options: { scheduled?: boolean; userId?: string } = {}): Promise<void> {
   const scheduled = options.scheduled ?? process.env.INGESTION_SCHEDULED === "true";
+  if (!options.userId) {
+    const users = await prisma.user.findMany({ select: { id: true } });
+    for (const user of users) await runIngestion({ scheduled, userId: user.id });
+    return;
+  }
+  const userId = options.userId;
   const startedAt = Date.now();
-  await ensureDefaultCategories();
-  await ensureSourcePreference();
+  await ensureDefaultCategories(userId);
+  await ensureSourcePreference(userId);
 
-  const preferences = await prisma.userPreference.findFirst({
+  const preferences = await prisma.userPreference.findUnique({ where: { userId },
     select: { maxArticlesPerSource: true, ingestionIntervalHours: true },
   });
   if (scheduled) {
     const latestRun = await prisma.ingestionRun.findFirst({
-      where: { scheduled: true, completedAt: { not: null } },
+      where: { scheduled: true, completedAt: { not: null }, userId },
       orderBy: { completedAt: "desc" },
       select: { completedAt: true },
     });
@@ -267,7 +274,7 @@ export async function runIngestion(options: { scheduled?: boolean } = {}): Promi
       ? savedArticleLimit
       : MAX_ARTICLES_PER_RUN;
 
-  const staleRunCount = await markStaleIngestionRuns();
+  const staleRunCount = await markStaleIngestionRuns(new Date(), userId);
   if (staleRunCount > 0) {
     console.warn(`[ingest] marked stale runs failed: ${staleRunCount}`);
   }
@@ -276,11 +283,13 @@ export async function runIngestion(options: { scheduled?: boolean } = {}): Promi
     data: {
       status: "running",
       scheduled,
+      userId,
       sourcesProcessed: 0,
     },
   });
 
   const sources = await prisma.source.findMany({
+    where: { userId },
     include: { category: { select: { name: true } } },
     orderBy: [{ category: { name: "asc" } }, { title: "asc" }],
   });
@@ -319,7 +328,7 @@ export async function runIngestion(options: { scheduled?: boolean } = {}): Promi
   }
   const candidates = [...uniqueCandidates.values()];
   const existing = candidates.length ? await prisma.article.findMany({
-    where: { canonicalUrl: { in: candidates.map((candidate) => candidate.canonicalUrl) } },
+    where: { canonicalUrl: { in: candidates.map((candidate) => candidate.canonicalUrl) }, source: { userId } },
     select: { canonicalUrl: true },
   }) : [];
   const existingUrls = new Set(existing.map((article) => article.canonicalUrl));

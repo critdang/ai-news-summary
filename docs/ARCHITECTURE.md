@@ -4,20 +4,21 @@
 ```mermaid
 flowchart TD
     subgraph Frontend[Next.js UI (Vercel)]
-        UI[Reader UI & Settings]
+        UI[News Feed, Discover Projects & Settings]
     end
     subgraph API[Serverless API (Vercel)]
         Handlers[API Route Handlers]
         Prisma[Prisma Client]
     end
     subgraph DB[Supabase PostgreSQL]
-        Tables[Articles, Sources, Categories, Bookmarks, Runs, Health]
+        Tables[Articles, RSS Sources, Users, Projects, Connector Configs, Snapshots, Runs]
     end
     subgraph Worker[Vercel Cron Worker]
         Ingest[Ingestion Script]
         Cleanup[Retention Script]
     end
     UI --> Handlers
+    GitHub[GitHub REST Search API] --> Handlers
     Handlers --> Prisma
     Prisma --> Tables
     Ingest --> Tables
@@ -56,10 +57,22 @@ flowchart TD
 | Ingestion Worker | Scheduled RSS fetch, deduplication, article metadata storage | Vercel Cron (Node runtime) | Node/TS, rss-parser |
 | Retention Job | Periodic cleanup of old, un‑bookmarked articles | Vercel Cron | Prisma, date‑fns |
 | AI Provider Layer | Unified interface to Gemini, Groq, and mock mode | On-demand API routes | TypeScript, fetch, timeout/retry logic |
+| Connector Registry | Versioned connector contract, validation and domain capabilities | Next.js server routes | TypeScript, Zod |
+| GitHub connector | Bounded public repository discovery and normalization | Next.js server routes | GitHub REST Search API |
+| Project domain | Per-user current project state and daily star/fork snapshots | Supabase PostgreSQL | Prisma |
+
+## Connector and domain boundaries
+- `ConnectorConfig` stores user-owned criteria and flags; connector implementations are registered in code, not stored as executable user content.
+- `Project` is a separate domain with a stable `(connectorConfigId, externalId)` key. Daily metrics are upserted by UTC date, preserving prior days.
+- `/api/connectors` and `/api/projects` enforce session ownership. GitHub requests use a fixed HTTPS host, public-only query, bounded result count, a 10-second timeout, and one bounded retry for transient responses.
+- A server-only `GITHUB_TOKEN` is optional and only increases the shared GitHub API quota. It is never sent to the browser.
+- Generic JSON/REST connector, releases, scheduled project sync, and private repository access are not implemented. A future REST connector must add strict endpoint/SSRF validation, safe auth storage, mappings and pagination limits before enabling arbitrary endpoints.
+- Existing RSS ingestion, Article persistence, temporary URL reading and RSS-only Daily Briefing remain independent of Projects.
 
 ## Security Boundaries
+- **User preferences** (summary language, retention, ingestion interval and budget, AI provider and model) are editable in Settings and stored per user in Supabase. Gemini and Groq keys entered there are encrypted with AES-256-GCM before storage; the server derives the encryption key from `AUTH_SECRET`, which must be preserved across deploys and backups. Matching `.env` credentials remain available as deployment-level defaults and fallbacks.
 - **Secrets** (`DATABASE_URL`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `CRON_SECRET`) are server-only Vercel environment variables and are never returned to the browser.
-- **Authentication and row ownership are not implemented** for the reader/API. Keep hosted deployments private or behind Vercel Deployment Protection until authentication and RLS policies are added.
+- **Authentication** uses server-side NextAuth credentials and per-user ownership checks on the implemented API routes. Supabase RLS policies are not configured; database access is mediated by the server-side Prisma connection.
 - **Input validation**: RSS URLs are validated against a whitelist of `http/https` schemes, private‑IP blocks are blocked, and article content is sanitized before rendering.
 - **Rate‑limit handling**: AI wrapper honors provider `Retry-After` guidance for 429 responses and applies bounded exponential backoff for transient server errors. RSS ingestion splits the configured total new-article budget across feeds.
 

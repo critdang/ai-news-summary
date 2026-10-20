@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Rss, Lock, User, Loader2, ArrowRight, AlertCircle } from "lucide-react";
+import { AuthOptions } from "@/components/auth/AuthOptions";
 
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
@@ -40,7 +40,7 @@ export default function RegisterPage() {
       if (result?.error) {
         setError("Account created but login failed");
       } else {
-        router.push("/feeds");
+        router.push("/");
         router.refresh();
       }
     } catch {
@@ -57,11 +57,12 @@ export default function RegisterPage() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-lg shadow-primary/25">
             <Rss className="h-7 w-7 text-primary-foreground" />
           </div>
-          <h1 className="text-2xl font-bold">Create Account</h1>
+          <h1 className="text-2xl font-bold">FastNews</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Start your smart RSS reading experience
           </p>
         </div>
+        <AuthOptions active="sign-up" />
 
         <form
           onSubmit={handleSubmit}
@@ -109,9 +110,9 @@ export default function RegisterPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min 6 characters"
+                placeholder="Min 8 characters"
                 required
-                minLength={6}
+                minLength={8}
                 className="w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-4 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
             </div>
@@ -132,15 +133,6 @@ export default function RegisterPage() {
           </button>
         </form>
 
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <Link
-            href="/login"
-            className="font-medium text-primary hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
       </div>
     </div>
   );

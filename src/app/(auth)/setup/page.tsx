@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
@@ -31,11 +31,7 @@ export default function SetupPage() {
   const [dbError, setDbError] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    checkSetup();
-  }, []);
-
-  async function checkSetup() {
+  const checkSetup = useCallback(async () => {
     try {
       const res = await fetch("/api/setup");
       const data = await res.json();
@@ -43,7 +39,6 @@ export default function SetupPage() {
       if (data.data?.dbError) {
         setDbError(true);
         // DB error - don't show form, keep checking
-        setTimeout(checkSetup, 3000);
         return;
       }
 
@@ -55,9 +50,18 @@ export default function SetupPage() {
       }
     } catch {
       setDbError(true);
-      setTimeout(checkSetup, 3000);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => void checkSetup(), 0);
+    return () => window.clearTimeout(initialTimer);
+  }, [checkSetup]);
+  useEffect(() => {
+    if (!dbError) return;
+    const retryTimer = window.setInterval(() => void checkSetup(), 3000);
+    return () => window.clearInterval(retryTimer);
+  }, [dbError, checkSetup]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,6 +77,10 @@ export default function SetupPage() {
 
       const data = await res.json();
 
+      if (res.status === 409) {
+        router.replace("/login");
+        return;
+      }
       if (!res.ok) {
         setError(data.error || "Setup failed");
         setStep("form");
@@ -92,7 +100,7 @@ export default function SetupPage() {
         if (result?.error) {
           router.push("/login");
         } else {
-          router.push("/feeds");
+          router.push("/");
           router.refresh();
         }
       }, 1500);
@@ -112,7 +120,7 @@ export default function SetupPage() {
           </div>
           <h1 className="text-2xl font-bold">Already Configured</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Feed2040 is already set up. You can sign in with your account.
+            FastNews is already set up. Sign in or create another account.
           </p>
           <Button
             onClick={() => router.push("/login")}
@@ -169,7 +177,7 @@ export default function SetupPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary shadow-xl shadow-primary/25">
             <Rss className="h-8 w-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Welcome to Feed2040</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Welcome to FastNews</h1>
           <p className="mt-2 text-muted-foreground">
             Let&apos;s set up your smart RSS reader in seconds
           </p>
@@ -264,9 +272,9 @@ export default function SetupPage() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Min 6 characters"
+                    placeholder="Min 8 characters"
                     required
-                    minLength={6}
+                    minLength={8}
                     className={cn(
                       "rounded-xl py-2.5 pl-10 pr-4 focus:border-primary focus:ring-2 focus:ring-primary/20"
                     )}
@@ -286,7 +294,7 @@ export default function SetupPage() {
                   </>
                 ) : (
                   <>
-                    Launch Feed2040
+                    Launch FastNews
                     <ArrowRight size={16} />
                   </>
                 )}
@@ -296,7 +304,7 @@ export default function SetupPage() {
         </Card>
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          You can add more users later from the settings page
+          Other users can create accounts from the sign-up page
         </p>
       </div>
     </div>
